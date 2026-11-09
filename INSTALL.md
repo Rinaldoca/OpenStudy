@@ -241,6 +241,29 @@ Note that `uv --env-file` expands `$…` in values, which mangles
 `APP_PASSWORD_HASH` (`$argon2id$…`). Write the operator's hash straight into
 the `users` table instead of relying on `scripts/seed_operator_password.py`.
 
+**Sharing with a friend over Tailscale.** Keep it tailnet-only (never Funnel):
+share your Mac with them in the Tailscale admin console, then
+
+```bash
+# web/.env.local: VITE_API_BASE_URL=   (empty → same-origin, via Vite's /api proxy)
+VITE_TAILSCALE=1 pnpm --dir web dev
+tailscale serve --bg --https=8443 http://127.0.0.1:5173
+```
+
+Set `PUBLIC_URL` to that `https://<mac>.<tailnet>.ts.net:8443` address and
+`SIGNUPS_ENABLED=true` while they sign up (with `EMAIL_BACKEND=console` the
+verification link is printed in the API log), then turn sign-ups off again and
+share your linked course folders with them:
+
+```bash
+uv run --env-file .env --env-file .env.docker python scripts/share_folders.py friend@example.com
+```
+
+They see the same files live, but their own tasks, progress and notes. Ask AI,
+the quiz and *Link folder* stay yours: they run on your AI subscriptions and
+open dialogs on your screen. Edits to shared files (delete, rename, upload)
+affect both of you.
+
 Never set `LOCAL_MODE=true` on a shared or public deployment.
 
 ## 6. Put it on a public domain

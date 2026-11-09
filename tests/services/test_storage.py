@@ -442,3 +442,14 @@ def test_linked_course_folder(study_root, tmp_path, monkeypatch):
     (study_root / "BIO" / "notes.md").write_text("x")
     with pytest.raises(FileExistsError):
         storage._link_folder_sync(SENTINEL_USER_ID, "BIO", outside)
+
+
+def test_machine_access_is_operator_only(monkeypatch):
+    from uuid import uuid4
+    from app.services import storage
+
+    monkeypatch.setenv("LOCAL_MODE", "true")
+    assert storage.machine_access(SENTINEL_USER_ID)
+    assert not storage.machine_access(uuid4())  # a friend's account
+    monkeypatch.setenv("LOCAL_MODE", "false")
+    assert not storage.machine_access(SENTINEL_USER_ID)

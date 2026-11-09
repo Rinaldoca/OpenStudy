@@ -56,6 +56,15 @@ def local_mode() -> bool:
     return os.environ.get("LOCAL_MODE", "").strip().lower() == "true"
 
 
+def machine_access(user_id: UUID) -> bool:
+    """Features that act on this Mac as its owner — the folder picker, and the
+    AI CLIs logged into the owner's personal subscriptions — are for the
+    operator only, even when friends have accounts on the same instance."""
+    from ..config import get_settings  # local: config is cheap, avoids import cycles
+
+    return local_mode() and str(user_id) == get_settings().operator_user_id
+
+
 def linked_folder(user_id: UUID, folder: str) -> Path | None:
     """Target of a linked course folder (a top-level symlink in the user's
     root), or None if `folder` isn't linked."""

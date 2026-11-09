@@ -59,16 +59,17 @@ def _search_path() -> str:
     return os.pathsep.join([os.environ.get("PATH", ""), *map(str, extra)])
 
 
-def _require_local() -> None:
-    if not storage_svc.local_mode():
-        raise HTTPException(403, "AI needs LOCAL_MODE=true (backend running on your own Mac)")
+def _require_local(user: User) -> None:
+    if not storage_svc.machine_access(user.id):
+        raise HTTPException(403, "AI is only available to this Mac's owner (LOCAL_MODE=true): it runs on their own AI subscriptions")
 
 
 @router.get("/providers")
-async def providers() -> dict:
+async def providers(user: User = Depends(require_user)) -> dict:
     path = _search_path()
     return {
-        "local_mode": storage_svc.local_mode(),
+        # False for friends' accounts: the UI then hides Ask AI and the quiz.
+        "local_mode": storage_svc.machine_access(user.id),
         "providers": [
             {"id": pid, "installed": shutil.which(binary, path=path) is not None, "hint": _LOGIN_HINT[pid]}
             for pid, (binary, _) in _COMMANDS.items()
@@ -148,9 +149,9 @@ def _run(provider: str, prompt: str) -> subprocess.CompletedProcess:
         )
 
 
-async def run_ai(provider: str, prompt: str) -> str:
+async def run_ai(provider: str, prompt: str, user: User) -> str:
     """Run `prompt` through the provider's CLI and return its answer (HTTP errors on failure)."""
-    _require_local()
+    _require_local(user)
     try:
         proc = await asyncio.to_thread(_run, provider, prompt)
     except subprocess.TimeoutExpired as exc:
@@ -168,9 +169,9 @@ async def run_ai(provider: str, prompt: str) -> str:
 
 @router.post("/ask")
 async def ask(body: AskBody, user: User = Depends(require_user)) -> dict:
-    _require_local()
+    _require_local(user)
     material = await _material(user, body.path, body.page) if body.path else None
-    answer = await run_ai(body.provider, _prompt(body, material))
+    answer = await run_ai(body.provider, _prompt(body, material), user)
     # Logged so the daily quiz knows what you asked about (question only, not the answer).
     await events_svc.record_event(user.id, EventCreate(
         kind="ai:ask",

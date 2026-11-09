@@ -38,11 +38,11 @@ def test_quiz_parses_json_wrapped_in_prose_and_scores_grades(monkeypatch):
     with pytest.raises(HTTPException):
         quiz._parse_json("no quiz today")
 
-    async def fake_ai(provider, prompt):
+    async def fake_ai(provider, prompt, user):
         assert "Student: (no answer)" in prompt  # missing answers are padded
         return '{"results": [{"id": 1, "correct": true, "feedback": "ok"}, {"id": 2, "correct": false, "feedback": "no"}],' \
                ' "summary": "fine", "gaps": ["pumping lemma"], "next_steps": ["redo ex. 3"]}'
     monkeypatch.setattr(quiz, "run_ai", fake_ai)
     qs = [quiz.QuizQuestion(id=i, type="short", question="q", answer="a") for i in (1, 2)]
-    out = asyncio.run(quiz.grade(quiz.GradeBody(provider="claude", questions=qs, answers=["a"])))
+    out = asyncio.run(quiz.grade(quiz.GradeBody(provider="claude", questions=qs, answers=["a"]), user=None))
     assert (out["score"], out["total"], out["gaps"]) == (1, 2, ["pumping lemma"])

@@ -390,7 +390,8 @@ def _course_folder(raw: str) -> str:
 @router.get("/linked-folder")
 async def linked_folder(folder: str = Query(...), user: User = Depends(require_user)) -> dict[str, Any]:
     target = storage_svc.linked_folder(user.id, _course_folder(folder))
-    return {"local_mode": storage_svc.local_mode(), "path": str(target) if target else None}
+    # Reading a linked folder works for everyone; (re)linking is the Mac owner's.
+    return {"local_mode": storage_svc.machine_access(user.id), "path": str(target) if target else None}
 
 
 @router.post("/link-folder")
@@ -398,8 +399,8 @@ async def link_folder(body: dict[str, Any] = Body(...), user: User = Depends(req
     """Open the macOS folder picker on this machine and link the chosen
     folder to a course. Only in LOCAL_MODE: on a server there is nobody in
     front of the screen, and the path would be the server's, not yours."""
-    if not storage_svc.local_mode():
-        raise HTTPException(403, "linking folders needs LOCAL_MODE=true (backend running on your own Mac)")
+    if not storage_svc.machine_access(user.id):
+        raise HTTPException(403, "only this Mac's owner can link folders (LOCAL_MODE=true): the picker opens on their screen")
     folder = _course_folder(body.get("folder") or "")
     try:
         proc = await asyncio.to_thread(

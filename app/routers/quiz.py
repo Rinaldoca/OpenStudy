@@ -124,7 +124,7 @@ Write exactly {body.count} questions. Reply with ONLY this JSON, no prose, no co
   {{"id": 2, "type": "short", "question": "...", "answer": "<model answer, 1-3 sentences>", "topic": "..."}}
 ]}}
 Write in the language of the material."""
-    data = _parse_json(await run_ai(body.provider, prompt))
+    data = _parse_json(await run_ai(body.provider, prompt, user))
     questions = []
     for q in data.get("questions") or []:
         try:
@@ -147,7 +147,7 @@ Write in the language of the material."""
 
 
 @router.post("/grade")
-async def grade(body: GradeBody) -> dict:
+async def grade(body: GradeBody, user: User = Depends(require_user)) -> dict:
     answers = body.answers + [""] * (len(body.questions) - len(body.answers))
     items = "\n\n".join(
         f"<q id=\"{q.id}\" type=\"{q.type}\" topic=\"{q.topic}\">\nQuestion: {q.question}\n"
@@ -166,7 +166,7 @@ Reply with ONLY this JSON, no prose, no code fences:
  "gaps": ["<concept the student is missing or shaky on>"],
  "next_steps": ["<concrete thing to review or practice>"]}}
 Write in the language of the questions."""
-    data = _parse_json(await run_ai(body.provider, prompt))
+    data = _parse_json(await run_ai(body.provider, prompt, user))
     results = [
         {"id": int(r.get("id", 0)), "correct": bool(r.get("correct")), "feedback": str(r.get("feedback", ""))}
         for r in data.get("results") or [] if isinstance(r, dict)

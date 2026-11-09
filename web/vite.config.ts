@@ -17,10 +17,11 @@ export default defineConfig({
     port: 5173,
     // Accept tunneled requests (e.g. cloudflared Quick Tunnels) when VITE_TUNNEL=1.
     // Still bound to localhost; only the tunnel daemon reaches Vite.
-    allowedHosts:
-      process.env.VITE_TUNNEL === "1"
-        ? [".trycloudflare.com", ".cfargotunnel.com"]
-        : undefined,
+    // VITE_TAILSCALE=1: accept `tailscale serve` traffic (tailnet-only HTTPS).
+    allowedHosts: [
+      ...(process.env.VITE_TUNNEL === "1" ? [".trycloudflare.com", ".cfargotunnel.com"] : []),
+      ...(process.env.VITE_TAILSCALE === "1" ? [".ts.net"] : []),
+    ],
     proxy: {
       "/api": { target: "http://localhost:8000", changeOrigin: true },
       "/oauth": { target: "http://localhost:8000", changeOrigin: true },
