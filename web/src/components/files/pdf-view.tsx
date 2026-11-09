@@ -32,7 +32,9 @@ type PdfJs = typeof import("pdfjs-dist");
 type Stroke = { c: string; w: number; hl?: boolean; pts: number[] };
 type Item =
   | { t: "img"; src: string; x: number; y: number; w: number; h: number }
-  | { t: "text"; text: string; x: number; y: number; size: number; c: string };
+  // w/h: the text box (wraps at w). Notes saved before boxes existed have neither.
+  | { t: "text"; text: string; x: number; y: number; w?: number; h?: number; size: number; c: string };
+type Active = { slot: string; i: number; editing?: boolean } | null;
 type PageNotes = { strokes?: Stroke[]; items?: Item[] };
 type Notes = { layout?: string[]; pages: Record<string, PageNotes> };
 type Tool = "select" | "pen" | "hl" | "eraser" | "text" | "lasso";
@@ -141,7 +143,15 @@ export function PdfView({ url, path }: { url: string; path: string }) {
       return fn(prev);
     });
   }, []);
+  // The selected image/text box (one at a time, across pages); `editing` = typing in it.
+  const [active, setActive] = useState<Active>(null);
+  const activeRef = useRef<Active>(null);
+  useEffect(() => {
+    activeRef.current = active;
+  }, [active]);
+
   const undo = useCallback(() => {
+    setActive(null); // indices may no longer match
     const prev = history.current.pop();
     if (prev) {
       dirty.current = true;
@@ -179,16 +189,20 @@ export function PdfView({ url, path }: { url: string; path: string }) {
     });
   }
 
+  /** Add an image to `slot` (default: the page in view), centred on `at` (default: upper middle), and select it. */
   const insertImage = useCallback(
-    async (file: Blob) => {
+    async (file: Blob, slot = currentSlot.current, at?: [number, number]) => {
       const img = await downscale(file);
       const w = Math.min(size.w * 0.6, img.w);
       const h = (w * img.h) / img.w;
-      updatePage(currentSlot.current, (p) => ({
+      const [cx, cy] = at ?? [size.w / 2, size.h * 0.15 + h / 2];
+      const i = notesRef.current?.pages[slot]?.items?.length ?? 0;
+      updatePage(slot, (p) => ({
         ...p,
-        items: [...(p.items ?? []), { t: "img", src: img.src, x: round((size.w - w) / 2), y: round(size.h * 0.15), w: round(w), h: round(h) }],
+        items: [...(p.items ?? []), { t: "img", src: img.src, x: round(cx - w / 2), y: round(cy - h / 2), w: round(w), h: round(h) }],
       }));
       setTool("select");
+      setActive({ slot, i });
     },
     [size, updatePage]
   );
@@ -270,6 +284,20 @@ export function PdfView({ url, path }: { url: string; path: string }) {
       }
     };
     const onKey = (e: KeyboardEvent) => {
+      const a = activeRef.current;
+      if (a && !a.editing && !inField(e.target)) {
+        if (e.key === "Backspace" || e.key === "Delete") {
+          e.preventDefault();
+          updatePage(a.slot, (p) => ({ ...p, items: (p.items ?? []).filter((_, j) => j !== a.i) }));
+          setActive(null);
+          return;
+        }
+        if (e.key === "Escape") {
+          e.stopPropagation(); // deselect instead of closing the viewer
+          setActive(null);
+          return;
+        }
+      }
       if (!(e.metaKey || e.ctrlKey) || inField(e.target)) return;
       const zoomKeys: Record<string, number> = { "=": 1.25, "+": 1.25, "-": 0.8, "0": 0 };
       if (e.key === "z" && !e.shiftKey) {
@@ -282,12 +310,12 @@ export function PdfView({ url, path }: { url: string; path: string }) {
       }
     };
     window.addEventListener("paste", onPaste);
-    window.addEventListener("keydown", onKey);
+    window.addEventListener("keydown", onKey, true); // capture: before the viewer's Escape-to-close
     return () => {
       window.removeEventListener("paste", onPaste);
-      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("keydown", onKey, true);
     };
-  }, [insertImage, undo, zoomTo]);
+  }, [insertImage, undo, zoomTo, updatePage]);
 
   // Track the page in view: for "add page after", pasting, Ask AI's page and the page counter.
   const notesLoaded = notes !== null;
@@ -315,6 +343,14 @@ export function PdfView({ url, path }: { url: string; path: string }) {
   }
 
   const color = tool === "hl" ? hlColor : penColor;
+  function pickColor(c: string) {
+    if (tool === "hl") return setHlColor(c);
+    setPenColor(c);
+    const a = active;
+    if (a && notes?.pages[a.slot]?.items?.[a.i]?.t === "text") {
+      updatePage(a.slot, (p) => ({ ...p, items: (p.items ?? []).map((it, j) => (j === a.i && it.t === "text" ? { ...it, c } : it)) }));
+    }
+  }
   const ready = doc && pdfjs && notes;
 
   return (
@@ -343,6 +379,9 @@ export function PdfView({ url, path }: { url: string; path: string }) {
                 scroller={scrollerRef}
                 onChange={(fn) => updatePage(slot, fn)}
                 onRemove={pageNumber(slot) ? undefined : () => removePage(slot)}
+                active={active?.slot === slot ? active : null}
+                setActive={(i, editing) => setActive(i === null ? null : { slot, i, editing })}
+                onDropImage={(file, at) => void insertImage(file, slot, at)}
               />
             ))}
           </div>
@@ -367,14 +406,14 @@ export function PdfView({ url, path }: { url: string; path: string }) {
 
       {ready && (
         <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-10 flex flex-col items-center gap-1.5 max-w-[calc(100%-5.5rem)]">
-          {(tool === "pen" || tool === "hl" || tool === "text") && (
+          {(tool === "pen" || tool === "hl" || tool === "text" || (active && notes?.pages[active.slot]?.items?.[active.i]?.t === "text")) && (
             <div className="flex flex-wrap justify-center gap-1.5 rounded-2xl border border-border/60 bg-surface px-2 py-1.5 shadow-lg">
               {(tool === "hl" ? HL_COLORS : PEN_COLORS).map((c) => (
                 <button
                   key={c}
                   type="button"
                   aria-label={`Color ${c}`}
-                  onClick={() => (tool === "hl" ? setHlColor(c) : setPenColor(c))}
+                  onClick={() => pickColor(c)}
                   className={cn("h-6 w-6 rounded-full border-2 ring-1 ring-white/30", color === c ? "border-fg" : "border-transparent")}
                   style={{ background: c }}
                 />
@@ -382,7 +421,7 @@ export function PdfView({ url, path }: { url: string; path: string }) {
               <CustomColor
                 value={color}
                 active={!(tool === "hl" ? HL_COLORS : PEN_COLORS).includes(color)}
-                onChange={(c) => (tool === "hl" ? setHlColor(c) : setPenColor(c))}
+                onChange={pickColor}
               />
             </div>
           )}
@@ -451,7 +490,8 @@ function ToolButton({
   );
 }
 
-type Drag = { i: number; mode: "move" | "resize"; x0: number; y0: number; dx: number; dy: number };
+type Corner = "nw" | "ne" | "sw" | "se";
+type Drag = { i: number; mode: "move" | Corner; x0: number; y0: number; dx: number; dy: number };
 
 /** One page: canvas + text layer (original pages) or blank paper, plus the notes overlay. */
 function PdfPage({
@@ -466,6 +506,9 @@ function PdfPage({
   scroller,
   onChange,
   onRemove,
+  active,
+  setActive,
+  onDropImage,
 }: {
   pdfjs: PdfJs;
   doc: PDFDocumentProxy;
@@ -478,6 +521,9 @@ function PdfPage({
   scroller: React.RefObject<HTMLDivElement | null>;
   onChange: (fn: (p: PageNotes) => PageNotes) => void;
   onRemove?: () => void;
+  active: Active;
+  setActive: (i: number | null, editing?: boolean) => void;
+  onDropImage: (file: File, at: [number, number]) => void;
 }) {
   const n = pageNumber(slot);
   const ref = useRef<HTMLDivElement>(null);
@@ -494,6 +540,7 @@ function PdfPage({
   const [pageSize, setPageSize] = useState(size);
   const [draft, setDraft] = useState<number[] | null>(null);
   const [drag, setDrag] = useState<Drag | null>(null);
+  const [boxDraft, setBoxDraft] = useState<number[] | null>(null); // text box being dragged out
   const erasing = useRef(false);
   // Lasso: the loop being drawn, the selected strokes/items (by identity, so an
   // undo that swaps them out simply empties the selection), and a pending move.
@@ -597,14 +644,17 @@ function PdfPage({
       erasing.current = true;
       eraseAt(pt);
     } else if (tool === "text") {
-      const text = window.prompt("Text");
-      if (text?.trim()) {
-        onChange((p) => ({ ...p, items: [...(p.items ?? []), { t: "text", text, x: pt[0], y: pt[1], size: 14, c: color }] }));
-      }
+      // Drag out a text box (or click for a default-sized one); typing starts right away.
+      svgRef.current!.setPointerCapture(e.pointerId);
+      setActive(null);
+      setBoxDraft([pt[0], pt[1], pt[0], pt[1]]);
     }
   }
   function onPointerMove(e: React.PointerEvent<SVGSVGElement>) {
-    if (lasso) {
+    if (boxDraft) {
+      const [x, y] = toPt(e);
+      setBoxDraft([boxDraft[0], boxDraft[1], x, y]);
+    } else if (lasso) {
       setLasso((l) => (l ? [...l, ...toPt(e)] : l));
     } else if (moveSel) {
       const [x, y] = toPt(e);
@@ -618,6 +668,18 @@ function PdfPage({
   }
   function onPointerUp() {
     erasing.current = false;
+    if (boxDraft) {
+      const [x0, y0, x1, y1] = boxDraft;
+      setBoxDraft(null);
+      const dragged = Math.abs(x1 - x0) > 12;
+      const box = dragged
+        ? { x: Math.min(x0, x1), y: Math.min(y0, y1), w: Math.abs(x1 - x0), h: Math.max(Math.abs(y1 - y0), 20) }
+        : { x: x0, y: y0, w: Math.min(220, w - x0 - 8), h: 22 };
+      const i = notes?.items?.length ?? 0;
+      onChange((p) => ({ ...p, items: [...(p.items ?? []), { t: "text", text: "", ...mapRound(box), size: 14, c: color }] }));
+      setActive(i, true);
+      return;
+    }
     if (lasso) {
       // A stroke is picked when most of it is inside the loop; an item when its centre is.
       const inside = (x: number, y: number) => pointInPolygon(x, y, lasso);
@@ -664,6 +726,11 @@ function PdfPage({
   }
   const deleteSelection = () => editSelection(() => null, () => null);
 
+  const deleteSelectionRef = useRef(deleteSelection);
+  useEffect(() => {
+    deleteSelectionRef.current = deleteSelection;
+  });
+
   // Backspace/Delete removes the selection, Escape clears it.
   useEffect(() => {
     if (!hasSel) return;
@@ -680,14 +747,17 @@ function PdfPage({
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
   }, [hasSel]);
-  const deleteSelectionRef = useRef(deleteSelection);
-  useEffect(() => {
-    deleteSelectionRef.current = deleteSelection;
-  });
 
-  // Move/resize images and text boxes (select + text tools).
+  // Select, move and resize images and text boxes (select + text tools).
   function itemDown(e: React.PointerEvent, i: number, mode: Drag["mode"]) {
     e.stopPropagation();
+    const it = notes?.items?.[i];
+    if (active?.editing && active.i === i) return; // clicks inside the textarea are for the cursor
+    if (mode === "move" && it?.t === "text" && (tool === "text" || active?.i === i)) {
+      setActive(i, true); // text tool, or a second click: start typing
+      return;
+    }
+    setActive(i);
     (e.target as Element).setPointerCapture(e.pointerId);
     const [x0, y0] = toPt(e);
     setDrag({ i, mode, x0, y0, dx: 0, dy: 0 });
@@ -704,15 +774,20 @@ function PdfPage({
     if (Math.abs(d.dx) + Math.abs(d.dy) < 1) return;
     onChange((p) => ({ ...p, items: (p.items ?? []).map((it, i) => (i === d.i ? applyDrag(it, d) : it)) }));
   }
-  function editText(i: number) {
-    const it = notes?.items?.[i];
-    if (it?.t !== "text") return;
-    const text = window.prompt("Text", it.text);
-    if (text === null) return;
+  /** Save what was typed; an empty box disappears. Grows the box to fit the text. */
+  function commitText(i: number, text: string, contentHeight: number) {
+    setActive(i);
     onChange((p) => ({
       ...p,
-      items: (p.items ?? []).flatMap((x, j) => (j !== i ? [x] : text.trim() ? [{ ...it, text }] : [])),
+      items: (p.items ?? []).flatMap((it, j) => {
+        if (j !== i || it.t !== "text") return [it];
+        return text.trim() ? [{ ...it, text, h: round(Math.max(it.h ?? 0, contentHeight)) }] : [];
+      }),
     }));
+    if (!text.trim()) setActive(null);
+  }
+  function setItem(i: number, fn: (it: Item) => Item | null) {
+    onChange((p) => ({ ...p, items: (p.items ?? []).flatMap((it, j) => (j !== i ? [it] : (fn(it) ?? []))) }));
   }
 
   const drawing = tool !== "select";
@@ -727,6 +802,15 @@ function PdfPage({
       data-pdf-page={n ?? undefined}
       className="pdf-page group"
       style={{ width: w * scale, height: h * scale, "--total-scale-factor": scale } as React.CSSProperties}
+      onPointerDown={() => active && !active.editing && setActive(null)} // items stop propagation
+      onDragOver={(e) => e.dataTransfer.types.includes("Files") && e.preventDefault()}
+      onDrop={(e) => {
+        const file = Array.from(e.dataTransfer.files).find((f) => f.type.startsWith("image/"));
+        if (!file) return;
+        e.preventDefault();
+        const r = e.currentTarget.getBoundingClientRect();
+        onDropImage(file, [(e.clientX - r.left) / scale, (e.clientY - r.top) / scale]);
+      }}
     >
       {n && visible && (
         <>
@@ -755,46 +839,33 @@ function PdfPage({
           </g>
         ))}
         {draft && <StrokePath s={{ c: color, w: tool === "hl" ? HL_WIDTH : PEN_WIDTH, hl: tool === "hl", pts: draft }} />}
-        {(notes?.items ?? []).map((raw, i) => {
-          const it = drag?.i === i ? applyDrag(raw, drag) : raw;
-          const handlers = {
-            style: { pointerEvents: itemsInteractive ? "all" : "none", cursor: "move" } as React.CSSProperties,
-            onPointerDown: (e: React.PointerEvent) => itemDown(e, i, "move"),
-            onPointerMove: itemMove,
-            onPointerUp: itemUp,
-          };
-          const shift = moveSel && picked.has(raw) ? `translate(${moveSel.dx} ${moveSel.dy})` : undefined;
-          if (it.t === "img") {
-            return (
-              <g key={i} transform={shift}>
-                <image href={it.src} x={it.x} y={it.y} width={it.w} height={it.h} preserveAspectRatio="none" {...handlers} />
-                {itemsInteractive && (
-                  <rect
-                    x={it.x + it.w - 6}
-                    y={it.y + it.h - 6}
-                    width={12}
-                    height={12}
-                    rx={2}
-                    className="fill-white stroke-gray-500"
-                    style={{ pointerEvents: "all", cursor: "nwse-resize" }}
-                    onPointerDown={(e) => itemDown(e, i, "resize")}
-                    onPointerMove={itemMove}
-                    onPointerUp={itemUp}
-                  />
-                )}
-              </g>
-            );
-          }
-          return (
-            <text key={i} transform={shift} fontSize={it.size} fill={it.c} fontFamily="Helvetica, Arial, sans-serif" onDoubleClick={() => editText(i)} {...handlers}>
-              {it.text.split("\n").map((line, j) => (
-                <tspan key={j} x={it.x} y={it.y + it.size * (j + 1)}>
-                  {line}
-                </tspan>
-              ))}
-            </text>
-          );
-        })}
+        {(notes?.items ?? []).map((raw, i) => (
+          <ItemView
+            key={i}
+            it={drag?.i === i ? applyDrag(raw, drag) : raw}
+            scale={scale}
+            interactive={itemsInteractive}
+            selected={itemsInteractive && active?.i === i}
+            editing={itemsInteractive && active?.i === i && !!active?.editing}
+            shift={moveSel && picked.has(raw) ? `translate(${moveSel.dx} ${moveSel.dy})` : undefined}
+            onDown={(e, mode) => itemDown(e, i, mode)}
+            onMove={itemMove}
+            onUp={itemUp}
+            onCommit={(text, height) => commitText(i, text, height)}
+          />
+        ))}
+        {boxDraft && (
+          <rect
+            x={Math.min(boxDraft[0], boxDraft[2])}
+            y={Math.min(boxDraft[1], boxDraft[3])}
+            width={Math.abs(boxDraft[2] - boxDraft[0])}
+            height={Math.abs(boxDraft[3] - boxDraft[1])}
+            fill="rgb(37 99 235 / 0.05)"
+            stroke="#2563eb"
+            strokeWidth={1 / scale}
+            strokeDasharray={`${4 / scale} ${3 / scale}`}
+          />
+        )}
         {lasso && (
           <polygon points={lasso.join(" ")} fill="rgb(37 99 235 / 0.06)" stroke="#2563eb" strokeWidth={1 / scale} strokeDasharray={`${4 / scale} ${3 / scale}`} />
         )}
@@ -844,6 +915,42 @@ function PdfPage({
           </button>
         </div>
       )}
+      {itemsInteractive && active && !drag && notes?.items?.[active.i] && (() => {
+        const it = notes.items[active.i];
+        const b = itemBox(it);
+        return (
+          <div
+            className="absolute z-10 flex items-center gap-0.5 rounded-full border border-border/60 bg-surface px-1 py-0.5 shadow-lg text-xs"
+            style={{ left: b.x * scale, top: Math.max(0, b.y * scale - 40) }}
+            onPointerDown={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.preventDefault()} // keep typing focus in the box
+          >
+            {it.t === "text" && (
+              <>
+                <button type="button" title="Smaller text" onClick={() => setItem(active.i, (x) => (x.t === "text" ? { ...x, size: Math.max(6, x.size - 2) } : x))} className="h-7 w-7 rounded-full hover:bg-surface-2">
+                  A−
+                </button>
+                <span className="w-6 text-center tabular-nums text-muted">{it.size}</span>
+                <button type="button" title="Bigger text" onClick={() => setItem(active.i, (x) => (x.t === "text" ? { ...x, size: Math.min(72, x.size + 2) } : x))} className="h-7 w-7 rounded-full hover:bg-surface-2">
+                  A+
+                </button>
+              </>
+            )}
+            <button
+              type="button"
+              title="Delete (⌫)"
+              aria-label="Delete"
+              onClick={() => {
+                setItem(active.i, () => null);
+                setActive(null);
+              }}
+              className="h-7 w-7 inline-flex items-center justify-center rounded-full text-critical hover:bg-surface-2"
+            >
+              <Trash2 className="h-4 w-4" />
+            </button>
+          </div>
+        );
+      })()}
       {onRemove && (
         <button
           type="button"
@@ -856,6 +963,105 @@ function PdfPage({
         </button>
       )}
     </div>
+  );
+}
+
+/** An image or text box on a page; when selected: a frame and corner handles, or a textarea while typing. */
+function ItemView({
+  it,
+  scale,
+  interactive,
+  selected,
+  editing,
+  shift,
+  onDown,
+  onMove,
+  onUp,
+  onCommit,
+}: {
+  it: Item;
+  scale: number;
+  interactive: boolean;
+  selected: boolean;
+  editing: boolean;
+  shift?: string;
+  onDown: (e: React.PointerEvent, mode: Drag["mode"]) => void;
+  onMove: (e: React.PointerEvent) => void;
+  onUp: () => void;
+  onCommit: (text: string, contentHeight: number) => void;
+}) {
+  const b = itemBox(it);
+  const body = {
+    style: { pointerEvents: interactive ? "all" : "none", cursor: editing ? "text" : "move" } as React.CSSProperties,
+    onPointerDown: (e: React.PointerEvent) => onDown(e, "move"),
+    onPointerMove: onMove,
+    onPointerUp: onUp,
+  };
+  return (
+    <g transform={shift}>
+      {it.t === "img" ? (
+        <image href={it.src} x={it.x} y={it.y} width={it.w} height={it.h} preserveAspectRatio="none" {...body} />
+      ) : (
+        <foreignObject x={b.x} y={b.y} width={b.w} height={b.h} overflow="visible" {...body}>
+          {editing ? (
+            <textarea
+              autoFocus
+              defaultValue={it.text}
+              placeholder="Type…"
+              onPointerDown={(e) => e.stopPropagation()}
+              onKeyDown={(e) => {
+                if (e.key !== "Escape") return;
+                e.stopPropagation(); // finish typing, don't close the viewer
+                e.currentTarget.blur();
+              }}
+              onInput={(e) => {
+                const ta = e.currentTarget;
+                ta.style.height = "auto";
+                ta.style.height = `${Math.max(b.h, ta.scrollHeight)}px`;
+              }}
+              onBlur={(e) => onCommit(e.currentTarget.value, e.currentTarget.scrollHeight)}
+              className="block w-full resize-none overflow-hidden border-0 bg-transparent p-0 shadow-none outline-none ring-0 focus:outline-none focus:ring-0"
+              style={{ ...textStyle(it), height: b.h, minHeight: b.h }}
+            />
+          ) : (
+            <div style={textStyle(it)}>{it.text}</div>
+          )}
+        </foreignObject>
+      )}
+      {selected && (
+        <>
+          <rect
+            x={b.x}
+            y={b.y}
+            width={b.w}
+            height={b.h}
+            fill="none"
+            stroke="#2563eb"
+            strokeWidth={1.2 / scale}
+            strokeDasharray={editing ? `${4 / scale} ${3 / scale}` : undefined}
+            pointerEvents="none"
+          />
+          {!editing &&
+            (["nw", "ne", "sw", "se"] as Corner[]).map((c) => (
+              <rect
+                key={c}
+                x={(c[1] === "w" ? b.x : b.x + b.w) - 5 / scale}
+                y={(c[0] === "n" ? b.y : b.y + b.h) - 5 / scale}
+                width={10 / scale}
+                height={10 / scale}
+                rx={2 / scale}
+                fill="#fff"
+                stroke="#2563eb"
+                strokeWidth={1.2 / scale}
+                style={{ pointerEvents: "all", cursor: c === "nw" || c === "se" ? "nwse-resize" : "nesw-resize" }}
+                onPointerDown={(e) => onDown(e, c)}
+                onPointerMove={onMove}
+                onPointerUp={onUp}
+              />
+            ))}
+        </>
+      )}
+    </g>
   );
 }
 
@@ -908,8 +1114,24 @@ function StrokePath({ s }: { s: Stroke }) {
   );
 }
 
+const mapRound = (b: { x: number; y: number; w: number; h: number }) => ({ x: round(b.x), y: round(b.y), w: round(b.w), h: round(b.h) });
+
+function textStyle(it: Extract<Item, { t: "text" }>): React.CSSProperties {
+  return {
+    fontSize: it.size,
+    lineHeight: 1.25,
+    color: it.c,
+    fontFamily: "Helvetica, Arial, sans-serif",
+    whiteSpace: "pre-wrap",
+    overflowWrap: "anywhere",
+    padding: 0,
+    margin: 0,
+  };
+}
+
 function itemBox(it: Item) {
   if (it.t === "img") return { x: it.x, y: it.y, w: it.w, h: it.h };
+  if (it.w) return { x: it.x, y: it.y, w: it.w, h: it.h ?? it.size * 1.25 };
   const lines = it.text.split("\n");
   // ponytail: approximate text box (0.55em per char) — good enough for erasing.
   return { x: it.x, y: it.y, w: Math.max(...lines.map((l) => l.length)) * it.size * 0.55, h: lines.length * it.size * 1.2 };
@@ -917,9 +1139,19 @@ function itemBox(it: Item) {
 
 function applyDrag(it: Item, d: Drag): Item {
   if (d.mode === "move") return { ...it, x: round(it.x + d.dx), y: round(it.y + d.dy) };
-  if (it.t !== "img") return it;
-  const w = Math.max(16, it.w + d.dx);
-  return { ...it, w: round(w), h: round((w * it.h) / it.w) }; // keep aspect ratio
+  // Corner resize: the opposite corner stays put. Images keep their aspect ratio.
+  const b = itemBox(it);
+  const west = d.mode[1] === "w";
+  const north = d.mode[0] === "n";
+  const w = Math.max(16, west ? b.w - d.dx : b.w + d.dx);
+  const h = it.t === "img" ? (w * b.h) / b.w : Math.max(12, north ? b.h - d.dy : b.h + d.dy);
+  return {
+    ...it,
+    x: round(west ? b.x + b.w - w : b.x),
+    y: round(north ? b.y + b.h - h : b.y),
+    w: round(w),
+    h: round(h),
+  };
 }
 
 /** Shrink pasted/picked images to ≤1600px so notes stay small. */

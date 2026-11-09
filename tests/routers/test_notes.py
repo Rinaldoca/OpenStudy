@@ -37,3 +37,15 @@ def test_flatten_without_notes_keeps_pages():
     src = fitz.open()
     src.new_page()
     assert fitz.open(stream=flatten(src.tobytes(), {}), filetype="pdf").page_count == 1
+
+
+def test_text_box_wraps_at_its_width():
+    src = fitz.open()
+    src.new_page(width=300, height=400)
+    long = "pumping lemma " * 8
+    data = {"pages": {"p1": {"items": [{"t": "text", "text": long, "x": 20, "y": 20, "w": 120, "h": 20, "size": 12}]}}}
+    page = fitz.open(stream=flatten(src.tobytes(), data), filetype="pdf")[0]
+    words = page.get_text("words")
+    assert len(words) == 16  # nothing cut off
+    assert max(w[2] for w in words) <= 20 + 120 + 1  # wrapped inside the box
+    assert len({round(w[1]) for w in words}) > 1  # on several lines

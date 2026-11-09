@@ -8,7 +8,7 @@ Notes are per user and never written into the original file. `data`:
   {"layout": ["p1", "p2", "b:k3j", "p3"],          # page order; "b:*" = blank page
    "pages": {"p1": {"strokes": [{"c": "#e11d48", "w": 2, "hl": false, "pts": [x, y, x, y, …]}],
                     "items":   [{"t": "img", "src": "data:image/png;base64,…", "x", "y", "w", "h"},
-                                {"t": "text", "text": "…", "x", "y", "size": 14, "c": "#111"}]}}}
+                                {"t": "text", "text": "…", "x", "y", "w", "h", "size": 14, "c": "#111"}]}}}
 in PDF points, origin top-left (pdf.js viewport at scale 1 = PyMuPDF page coords).
 """
 from __future__ import annotations
@@ -102,8 +102,14 @@ def flatten(pdf: bytes, data: dict) -> bytes:
                 page.insert_image(rect, stream=base64.b64decode(it["src"].split(",", 1)[1]))
             elif it.get("t") == "text" and it.get("text"):
                 size = float(it.get("size") or 14)
-                for i, line in enumerate(str(it["text"]).splitlines()):
-                    page.insert_text(fitz.Point(x, y + size * (i + 1)), line, fontsize=size, color=_rgb(it.get("c")))
+                if it.get("w"):
+                    # Text box: wrap at its width; let it run to the page bottom so nothing is cut.
+                    rect = fitz.Rect(x, y, x + float(it["w"]), max(page.rect.height, y + size * 2))
+                    page.insert_textbox(rect, str(it["text"]), fontsize=size, fontname="helv",
+                                        color=_rgb(it.get("c")), lineheight=1.25)
+                else:  # notes saved before text boxes existed
+                    for i, line in enumerate(str(it["text"]).splitlines()):
+                        page.insert_text(fitz.Point(x, y + size * (i + 1)), line, fontsize=size, color=_rgb(it.get("c")))
     return out.tobytes(garbage=3, deflate=True)
 
 
