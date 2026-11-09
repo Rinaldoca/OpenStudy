@@ -7,7 +7,7 @@ import {
   ASK_EVENT,
   PROVIDER_LABELS,
   askAi,
-  getOpenFile,
+  currentContext,
   useAiProviders,
   useDefaultProvider,
   type AskContext,
@@ -71,7 +71,7 @@ export function AskAi() {
   const [page, setPage] = useState("");
   const [question, setQuestion] = useState("");
   const [history, setHistory] = useState<Turn[]>([]);
-  const [popup, setPopup] = useState<{ x: number; y: number; text: string } | null>(null);
+  const [popup, setPopup] = useState<{ x: number; y: number; ctx: AskContext } | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -95,7 +95,7 @@ export function AskAi() {
       const detail = (e as CustomEvent<AskContext>).detail;
       setCtx(detail);
       setHistory([]);
-      setPage("");
+      setPage(detail.page ? String(detail.page) : "");
       resetAsk();
       setOpen(true);
       setPopup(null);
@@ -118,7 +118,8 @@ export function AskAi() {
         return;
       }
       const r = sel.getRangeAt(0).getBoundingClientRect();
-      setPopup({ x: Math.min(r.left + r.width / 2, window.innerWidth - 60), y: r.bottom + 8, text });
+      // Capture context now (incl. the PDF page the selection is on); clicking may clear it.
+      setPopup({ x: Math.min(r.left + r.width / 2, window.innerWidth - 60), y: r.bottom + 8, ctx: currentContext() });
     }
     function onDown(e: MouseEvent) {
       if (!(e.target as HTMLElement)?.closest?.("[data-ask-popup]")) setPopup(null);
@@ -150,12 +151,27 @@ export function AskAi() {
         <button
           type="button"
           data-ask-popup
-          onClick={() => askAi({ selection: popup.text, path: getOpenFile() ?? undefined })}
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => askAi(popup.ctx)}
           style={{ left: popup.x, top: popup.y }}
           className="fixed z-[70] -translate-x-1/2 inline-flex items-center gap-1.5 rounded-full border border-border/60 bg-surface px-3 py-1.5 text-xs font-medium shadow-lg hover:bg-surface-2"
         >
           <Sparkles className="h-3.5 w-3.5" />
           {t("ai.ask")}
+        </button>
+      )}
+
+      {!open && (
+        <button
+          type="button"
+          aria-label={t("ai.ask")}
+          title={t("ai.ask")}
+          // Keep the text selection alive so it's sent along.
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => askAi(currentContext())}
+          className="fixed z-[60] right-4 bottom-24 md:bottom-6 h-12 w-12 inline-flex items-center justify-center rounded-full bg-fg text-bg shadow-lg hover:scale-105 transition-transform"
+        >
+          <Sparkles className="h-5 w-5" />
         </button>
       )}
 

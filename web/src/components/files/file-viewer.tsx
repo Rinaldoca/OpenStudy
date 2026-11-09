@@ -1,21 +1,9 @@
 import { useEffect, useState } from "react";
-import { ExternalLink, FileText, Loader2, Sparkles, X } from "lucide-react";
-import { askAi, setOpenFile, useAiProviders } from "@/lib/ai";
+import { ExternalLink, Loader2, X } from "lucide-react";
+import { setOpenFile } from "@/lib/ai";
+import { PdfView } from "./pdf-view";
 import { useFileSignedUrl } from "@/lib/queries";
 import { cn } from "@/lib/cn";
-
-function useIsMobile() {
-  const [is, setIs] = useState(
-    () => typeof window !== "undefined" && window.matchMedia("(max-width: 767px)").matches
-  );
-  useEffect(() => {
-    const mql = window.matchMedia("(max-width: 767px)");
-    const h = () => setIs(mql.matches);
-    mql.addEventListener("change", h);
-    return () => mql.removeEventListener("change", h);
-  }, []);
-  return is;
-}
 
 /** Full-screen modal preview for a single file. PDFs render inline via iframe,
  *  markdown/text as preformatted text, everything else gets a download link. */
@@ -24,8 +12,6 @@ export function FileViewer({ path, onClose }: { path: string; onClose: () => voi
   const name = path.split("/").pop() || path;
   const ext = name.toLowerCase().split(".").pop() || "";
 
-  const ai = useAiProviders();
-  const aiEnabled = Boolean(ai.data?.local_mode && ai.data.providers.some((p) => p.installed));
   useEffect(() => {
     setOpenFile(path);
     return () => setOpenFile(null);
@@ -53,17 +39,6 @@ export function FileViewer({ path, onClose }: { path: string; onClose: () => voi
           <p className="text-sm font-medium truncate">{name}</p>
           <p className="text-[11px] text-muted truncate">{path}</p>
         </div>
-        {aiEnabled && (
-          <button
-            type="button"
-            // Picks up text selected in text files; PDFs (iframe) send just the file.
-            onClick={() => askAi({ path, selection: window.getSelection()?.toString().trim() || undefined })}
-            className="touch-target inline-flex items-center gap-1.5 rounded-md px-2 text-sm text-muted hover:text-fg hover:bg-surface-2 transition-colors"
-          >
-            <Sparkles className="h-4 w-4" />
-            <span className="hidden sm:inline">Ask AI</span>
-          </button>
-        )}
         {data?.url && (
           <a
             href={data.url}
@@ -100,46 +75,18 @@ export function FileViewer({ path, onClose }: { path: string; onClose: () => voi
           </div>
         )}
         {data?.url && !isPending && !error && (
-          <FileContent url={data.url} ext={ext} name={name} />
+          <FileContent url={data.url} ext={ext} name={name} path={path} />
         )}
       </div>
     </div>
   );
 }
 
-function FileContent({ url, ext, name }: { url: string; ext: string; name: string }) {
-  const isMobile = useIsMobile();
-
+function FileContent({ url, ext, name, path }: { url: string; ext: string; name: string; path: string }) {
   if (ext === "pdf") {
-    // iOS Safari disables scrolling inside iframed PDFs. Bounce mobile users
-    // into the OS's native PDF viewer (new tab) where pinch/scroll/page nav
-    // all work. Desktop browsers handle inline iframes fine.
-    if (isMobile) {
-      return (
-        <div className="h-full flex flex-col items-center justify-center gap-4 p-6 text-center">
-          <FileText className="h-12 w-12 text-muted" />
-          <p className="text-sm text-muted max-w-xs">
-            Mobile browsers don't let PDFs scroll inside an in-app viewer. Tap below to open in your
-            browser's native viewer — you'll get proper pinch-zoom and page nav there.
-          </p>
-          <a
-            href={url}
-            target="_blank"
-            rel="noreferrer"
-            className="inline-flex items-center gap-2 rounded-md bg-primary text-primary-fg text-sm font-medium px-5 py-3 touch-target"
-          >
-            <ExternalLink className="h-4 w-4" /> Open {name}
-          </a>
-        </div>
-      );
-    }
-    return (
-      <iframe
-        src={url}
-        title={name}
-        className="w-full h-full border-0"
-      />
-    );
+    // Rendered in-page (not an iframe): selectable text for Ask AI, pen
+    // tools for notes, and scrolling that works on iOS too.
+    return <PdfView url={url} path={path} />;
   }
   if (["png", "jpg", "jpeg", "webp", "gif"].includes(ext)) {
     return (

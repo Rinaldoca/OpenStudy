@@ -14,22 +14,37 @@ type ProvidersResponse = {
   local_mode: boolean;
   providers: { id: ProviderId; installed: boolean; hint: string }[];
 };
-export type AskContext = { selection?: string; path?: string };
+export type AskContext = { selection?: string; path?: string; page?: number };
 export type Turn = { question: string; answer: string };
 
 const STORAGE_KEY = "openstudy.aiProvider";
 export const ASK_EVENT = "openstudy:ask";
 
-// ponytail: module-level "which file is open" — one viewer at a time; a context if that changes.
+// ponytail: module-level "which file/page is open" — one viewer at a time; a context if that changes.
 let openFile: string | null = null;
+let openPage: number | null = null;
 export function setOpenFile(path: string | null) {
   openFile = path;
 }
 export function getOpenFile() {
   return openFile;
 }
+export function setOpenPage(page: number | null) {
+  openPage = page;
+}
 
-/** Open the Ask panel from anywhere (file viewer button, selection popup). */
+/** What the user is looking at right now: open file, PDF page, selected text.
+ *  A selection inside a PDF reports its own page (`data-pdf-page`). */
+export function currentContext(): AskContext {
+  const sel = window.getSelection();
+  const selection = sel?.toString().trim() || undefined;
+  const node = sel && sel.rangeCount ? sel.getRangeAt(0).startContainer : null;
+  const el = node instanceof Element ? node : node?.parentElement;
+  const page = Number(el?.closest<HTMLElement>("[data-pdf-page]")?.dataset.pdfPage) || openPage || undefined;
+  return { selection, path: openFile ?? undefined, page: openFile ? page : undefined };
+}
+
+/** Open the Ask panel from anywhere (AI bubble, selection popup). */
 export function askAi(ctx: AskContext) {
   window.dispatchEvent(new CustomEvent<AskContext>(ASK_EVENT, { detail: ctx }));
 }

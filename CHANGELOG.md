@@ -6,6 +6,35 @@ versions follow [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+### Added — notes on PDFs (pen, highlighter, images, text, blank pages)
+
+- PDFs now render with pdf.js (`pdfjs-dist`, own lazy chunk) instead of an
+  iframe: text is selectable (Ask AI gets the selection *and its page*), and
+  scrolling works on iOS. A floating toolbar adds **pen, highlighter, eraser,
+  lasso (move / recolour / delete), text boxes, images (pick or paste), blank
+  pages and undo**, with autosave. 13 pen + 7 highlighter colours and a custom
+  colour picker.
+- **Zoom** 40–500%: trackpad pinch, Ctrl/⌘+scroll, Safari/iPad pinch,
+  ⌘+ / ⌘− / ⌘0, or the top-right controls (with a page counter). Zooms around
+  the cursor, re-renders sharp once you stop, re-fits on window resize.
+- Notes are stored per user in a new `pdf_notes` table (RLS like the other
+  per-user tables), never written into the PDF — originals (possibly shared,
+  linked folders) stay untouched. **Export** flattens them into a copy with
+  PyMuPDF (`GET /api/notes/export`). Backend: `app/routers/notes.py`.
+- Ask AI moved from the file viewer's top bar to a floating bubble (bottom
+  right, every page) that sends the selection, open file and current page.
+
+### Added — sharing an instance with a friend (local mode)
+
+- `scripts/share_folders.py <email>` gives another account the operator's
+  linked course folders (same files, live) and copies those courses. Their
+  tasks, topics, quizzes and notes stay separate.
+- The AI features and the folder picker are now operator-only
+  (`storage.machine_access`): they run on the operator's own subscriptions /
+  open on the operator's screen. Friends still read linked folders.
+- `VITE_TAILSCALE=1` lets the Vite dev server answer `tailscale serve`
+  (`*.ts.net`) requests; INSTALL.md shows the setup.
+
 ### Added — local mode: linked folders + Ask AI with your own subscriptions
 
 For running the backend directly on your own Mac (`LOCAL_MODE=true`, see

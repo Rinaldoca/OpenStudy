@@ -49,6 +49,7 @@ async def _lifespan(app: FastAPI):
 from .routers import (
     ai as ai_router,
     quiz as quiz_router,
+    notes as notes_router,
     auth as auth_router,
     dashboard as dashboard_router,
     courses as courses_router,
@@ -151,6 +152,7 @@ def create_app() -> FastAPI:
         internal_router.router,
         ai_router.router,
         quiz_router.router,
+        notes_router.router,
     ]:
         app.include_router(r, prefix="/api")
 
