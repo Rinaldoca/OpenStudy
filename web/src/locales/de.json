@@ -43,7 +43,8 @@
     "archive": "Archiv",
     "sections": "Abschnitte",
     "volumes": "Bände",
-    "pages": "Seiten"
+    "pages": "Seiten",
+    "quiz": "Quiz"
   },
   "login": {
     "title": "Anmelden",
@@ -810,5 +811,39 @@
     "installed": "Installiert — nutzt dein eigenes Konto",
     "notInstalled": "Nicht eingerichtet — {{hint}}",
     "needsLocalMode": "Verfügbar, wenn OpenStudy auf deinem eigenen Computer läuft (LOCAL_MODE=true in .env)."
+  },
+  "quiz": {
+    "title": "Quiz",
+    "unavailable": "Das Quiz nutzt deine eigene KI (Claude, Gemini oder ChatGPT) und ist verfügbar, wenn OpenStudy auf deinem eigenen Computer mit LOCAL_MODE=true läuft. Richte einen Anbieter unter Einstellungen → KI-Assistent ein.",
+    "intro": "Wiederhole, was du heute gelernt hast. Deine KI schreibt Fragen aus den heutigen Vorlesungen, Lernthemen, geöffneten Dateien und deinen KI-Fragen — bewertet dann deine Antworten und zeigt dir, was dir noch fehlt.",
+    "course": "Kurs",
+    "allCourses": "Alle Kurse",
+    "questions": "Fragen",
+    "notes": "Was hast du heute gelernt? (optional, hilft sehr)",
+    "notesPlaceholder": "z. B. Pumping-Lemma, Abschlusseigenschaften, Übungsblatt 4…",
+    "create": "Heutiges Quiz erstellen",
+    "writing": "{{name}} schreibt dein Quiz…",
+    "basedOn": "Basierend auf: {{list}}",
+    "new": "Neues Quiz",
+    "answerPlaceholder": "Deine Antwort…",
+    "check": "Antworten prüfen",
+    "grading": "{{name}} bewertet…",
+    "correct": "Richtig",
+    "incorrect": "Nicht ganz",
+    "expected": "Erwartet: {{answer}}",
+    "score": "{{score}} / {{total}} richtig",
+    "gaps": "Was dir noch fehlt",
+    "nextSteps": "Nächste Schritte",
+    "src": {
+      "lectures_one": "{{count}} Vorlesung",
+      "lectures_other": "{{count}} Vorlesungen",
+      "topics_one": "{{count}} Thema",
+      "topics_other": "{{count}} Themen",
+      "files_one": "{{count}} Datei",
+      "files_other": "{{count}} Dateien",
+      "asked_one": "{{count}} Frage von dir",
+      "asked_other": "{{count}} Fragen von dir",
+      "notes": "deine Notizen"
+    }
   }
 }

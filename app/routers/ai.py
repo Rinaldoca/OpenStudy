@@ -26,6 +26,8 @@ from pydantic import BaseModel, Field
 
 from ..auth import require_user, User
 from ..intents import files as files_intent
+from ..schemas import EventCreate
+from ..services import events as events_svc
 from ..services import storage as storage_svc
 
 router = APIRouter(prefix="/ai", tags=["ai"], dependencies=[Depends(require_user)])
@@ -146,12 +148,11 @@ def _run(provider: str, prompt: str) -> subprocess.CompletedProcess:
         )
 
 
-@router.post("/ask")
-async def ask(body: AskBody, user: User = Depends(require_user)) -> dict:
+async def run_ai(provider: str, prompt: str) -> str:
+    """Run `prompt` through the provider's CLI and return its answer (HTTP errors on failure)."""
     _require_local()
-    material = await _material(user, body.path, body.page) if body.path else None
     try:
-        proc = await asyncio.to_thread(_run, body.provider, _prompt(body, material))
+        proc = await asyncio.to_thread(_run, provider, prompt)
     except subprocess.TimeoutExpired as exc:
         raise HTTPException(504, "the AI took longer than 5 minutes") from exc
     answer = proc.stdout.strip()
@@ -160,6 +161,20 @@ async def ask(body: AskBody, user: User = Depends(require_user)) -> dict:
         # Drop CLI warnings and agy's raw JSON echo of the same error.
         err = [ln for ln in lines if not ln.lower().startswith(("warning", "agy_error"))][-3:] or lines[-3:]
         needs_login = any(w in " ".join(err).lower() for w in ("auth", "login", "log in", "sign in"))
-        hint = f" — {_LOGIN_HINT[body.provider]}" if needs_login else ""
-        raise HTTPException(502, f"{body.provider} failed: {' / '.join(err) or 'no output'}{hint}")
+        hint = f" — {_LOGIN_HINT[provider]}" if needs_login else ""
+        raise HTTPException(502, f"{provider} failed: {' / '.join(err) or 'no output'}{hint}")
+    return answer
+
+
+@router.post("/ask")
+async def ask(body: AskBody, user: User = Depends(require_user)) -> dict:
+    _require_local()
+    material = await _material(user, body.path, body.page) if body.path else None
+    answer = await run_ai(body.provider, _prompt(body, material))
+    # Logged so the daily quiz knows what you asked about (question only, not the answer).
+    await events_svc.record_event(user.id, EventCreate(
+        kind="ai:ask",
+        course_code=storage_svc._course_code_from_path(body.path),
+        payload={"question": body.question, "path": body.path, "provider": body.provider},
+    ))
     return {"answer": answer}

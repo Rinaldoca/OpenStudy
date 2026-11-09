@@ -43,7 +43,8 @@
     "archive": "Archive",
     "sections": "Sections",
     "volumes": "Volumes",
-    "pages": "Pages"
+    "pages": "Pages",
+    "quiz": "Quiz"
   },
   "login": {
     "title": "Sign in",
@@ -810,5 +811,39 @@
     "installed": "Installed — uses your own account",
     "notInstalled": "Not set up — {{hint}}",
     "needsLocalMode": "Available when OpenStudy runs on your own computer (LOCAL_MODE=true in .env)."
+  },
+  "quiz": {
+    "title": "Quiz",
+    "unavailable": "The quiz uses your own AI (Claude, Gemini or ChatGPT) and is available when OpenStudy runs on your own computer with LOCAL_MODE=true. Set up a provider in Settings → AI assistant.",
+    "intro": "Recap what you studied today. Your AI writes questions from today's lectures, study topics, the files you opened and what you asked Ask AI — then grades your answers and tells you what you're missing.",
+    "course": "Course",
+    "allCourses": "All courses",
+    "questions": "Questions",
+    "notes": "What did you study today? (optional, helps a lot)",
+    "notesPlaceholder": "e.g. Pumping lemma, closure properties, exercise sheet 4…",
+    "create": "Create today's quiz",
+    "writing": "{{name}} is writing your quiz…",
+    "basedOn": "Based on: {{list}}",
+    "new": "New quiz",
+    "answerPlaceholder": "Your answer…",
+    "check": "Check answers",
+    "grading": "{{name}} is grading…",
+    "correct": "Correct",
+    "incorrect": "Not quite",
+    "expected": "Expected: {{answer}}",
+    "score": "{{score}} / {{total}} correct",
+    "gaps": "What you're missing",
+    "nextSteps": "Next steps",
+    "src": {
+      "lectures_one": "{{count}} lecture",
+      "lectures_other": "{{count}} lectures",
+      "topics_one": "{{count}} topic",
+      "topics_other": "{{count}} topics",
+      "files_one": "{{count}} file",
+      "files_other": "{{count}} files",
+      "asked_one": "{{count}} question you asked",
+      "asked_other": "{{count}} questions you asked",
+      "notes": "your notes"
+    }
   }
 }

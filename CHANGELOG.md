@@ -25,6 +25,13 @@ INSTALL.md → *Local mode*). Off by default; server deploys are unchanged.
   only sees the prompt: the selection, plus the open file's text (for PDFs
   just the pages around the one you name). Pick the default provider in
   **Settings → AI assistant**. Backend: `app/routers/ai.py`.
+- **Quiz** (new nav item): your AI writes a recap quiz from what you did
+  today — lectures held today, study topics covered/reviewed today, files you
+  opened and questions you asked Ask AI (now logged as `ai:ask` events,
+  question only), plus optional notes. It then grades your answers (short
+  answers by meaning, not wording) and lists what you're missing and what to
+  review next. Optional course filter. Nothing is stored.
+  Backend: `app/routers/quiz.py`.
 
 ### Added — static landing-only build
 

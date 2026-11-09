@@ -5,6 +5,7 @@ import {
   ListChecks,
   FolderOpen,
   GraduationCap,
+  CircleHelp,
   Activity,
   Settings,
 } from "lucide-react";
@@ -41,6 +42,7 @@ const workspace: NavItemDef[] = [
   { to: "/app/tasks", labelKey: "nav.tasks", icon: ListChecks },
   { to: "/app/files", labelKey: "nav.files", icon: FolderOpen },
   { to: "/app/exams", labelKey: "nav.exams", icon: GraduationCap },
+  { to: "/app/quiz", labelKey: "nav.quiz", icon: CircleHelp },
 ];
 const systemItems: NavItemDef[] = [
   { to: "/app/activity", labelKey: "nav.activity", icon: Activity },

@@ -41,6 +41,7 @@ function appRoutes() {
   const Exams = lazy(() => import("@/routes/exams"));
   const Files = lazy(() => import("@/routes/files"));
   const Activity = lazy(() => import("@/routes/activity"));
+  const Quiz = lazy(() => import("@/routes/quiz"));
   const Settings = lazy(() => import("@/routes/settings"));
   const landingOrApp = SHOW_LANDING ? <Landing /> : <Navigate to="/app" replace />;
 
@@ -66,6 +67,7 @@ function appRoutes() {
         { path: "exams", element: <Exams /> },
         { path: "files", element: <Files /> },
         { path: "activity", element: <Activity /> },
+        { path: "quiz", element: <Quiz /> },
         { path: "settings", element: <Settings /> },
       ],
     },

@@ -80,6 +80,10 @@ export function LibrarySidebar() {
         <span className="l-rn">V</span>
         <span className="l-nm">{t("nav.files")}</span>
       </LLink>
+      <LLink to="/app/quiz">
+        <span className="l-rn">VI</span>
+        <span className="l-nm">{t("nav.quiz")}</span>
+      </LLink>
 
       <div className="l-sect"><span className="l-rn">§</span>{t("nav.volumes")}</div>
       {(courses.data ?? []).map((c, i) => {

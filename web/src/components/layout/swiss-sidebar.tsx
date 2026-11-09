@@ -96,6 +96,10 @@ export function SwissSidebar() {
         <span className="s-n">05</span>
         <span>{t("nav.files")}</span>
       </SLink>
+      <SLink to="/app/quiz">
+        <span className="s-n">06</span>
+        <span>{t("nav.quiz")}</span>
+      </SLink>
 
       <div className="s-sect">
         {t("nav.courses")} <span>{pad(totalCourses)}</span>

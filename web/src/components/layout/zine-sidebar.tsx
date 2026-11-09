@@ -43,6 +43,13 @@ function Icon({ name }: { name: string }) {
       </g>
     ),
     folder: <path d="M3 6h6l2 2h10v12H3z" />,
+    quiz: (
+      <g>
+        <circle cx="12" cy="12" r="9" />
+        <path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.7.3-1 .9-1 1.7" />
+        <path d="M12 17h.01" />
+      </g>
+    ),
     flask: (
       <g>
         <path d="M9 3v6L4 20h16L15 9V3" />
@@ -125,6 +132,10 @@ export function ZineSidebar() {
       <ZLink to="/app/files">
         <span className="z-ic"><Icon name="folder" /></span>
         <span>{t("nav.files").toLowerCase()}</span>
+      </ZLink>
+      <ZLink to="/app/quiz">
+        <span className="z-ic"><Icon name="quiz" /></span>
+        <span>{t("nav.quiz").toLowerCase()}</span>
       </ZLink>
 
       <div className="z-lbl">~ {t("nav.courses").toLowerCase()} ~</div>

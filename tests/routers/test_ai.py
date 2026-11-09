@@ -26,3 +26,23 @@ def test_prompt_includes_material_selection_and_history():
     assert 'file="THIN/l1.pdf" (around page 4)' in p
     assert "MATERIAL" in p and "the pumping lemma" in p
     assert p.index("a lemma") < p.index("Question: why?")
+
+
+def test_quiz_parses_json_wrapped_in_prose_and_scores_grades(monkeypatch):
+    import asyncio
+    import pytest
+    from fastapi import HTTPException
+    from app.routers import quiz
+
+    assert quiz._parse_json('Sure! ```json\n{"a": {"b": 1}}\n``` hope it helps') == {"a": {"b": 1}}
+    with pytest.raises(HTTPException):
+        quiz._parse_json("no quiz today")
+
+    async def fake_ai(provider, prompt):
+        assert "Student: (no answer)" in prompt  # missing answers are padded
+        return '{"results": [{"id": 1, "correct": true, "feedback": "ok"}, {"id": 2, "correct": false, "feedback": "no"}],' \
+               ' "summary": "fine", "gaps": ["pumping lemma"], "next_steps": ["redo ex. 3"]}'
+    monkeypatch.setattr(quiz, "run_ai", fake_ai)
+    qs = [quiz.QuizQuestion(id=i, type="short", question="q", answer="a") for i in (1, 2)]
+    out = asyncio.run(quiz.grade(quiz.GradeBody(provider="claude", questions=qs, answers=["a"])))
+    assert (out["score"], out["total"], out["gaps"]) == (1, 2, ["pumping lemma"])
