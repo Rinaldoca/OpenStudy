@@ -191,17 +191,14 @@
     "emptyFolder": "Leerer Ordner.",
     "newFolder": "Neuer Ordner",
     "upload": "Hochladen",
-    "syncMoodle": "Moodle synchronisieren",
-    "syncMoodleCourse": "{{code}} synchronisieren",
+    "linkFolder": "Ordner verknüpfen",
+    "linkFolderPicking": "Ordner im Dialog auswählen…",
+    "linkFolderDone": "Verknüpft mit {{path}}",
+    "linkFolderFailed": "Ordner konnte nicht verknüpft werden — {{msg}}",
+    "linkedTo": "Verknüpft mit {{path}} — klicken zum Ändern",
     "searchPlaceholder": "In Dateien suchen (PDFs, Notebooks, Notizen)…",
     "searchFailed": "Suche fehlgeschlagen.",
     "searchEmpty": "Keine Treffer für „{{q}}\".",
-    "syncStageLogin": "Bei Moodle anmelden…",
-    "syncStageScrape": "ASB, AML, RN, RA werden geladen…",
-    "syncStageWrite": "Neue Dateien werden geschrieben…",
-    "syncDoneNew": "Sync abgeschlossen — {{count}} neue Dateien",
-    "syncDoneNoNew": "Sync abgeschlossen — bereits aktuell",
-    "syncFailed": "Sync fehlgeschlagen — {{msg}}",
     "couldNotLoad": "Dateien konnten nicht geladen werden.",
     "newFolderPrompt": "Name des neuen Ordners:",
     "renamePrompt": "„{{name}}\" umbenennen zu:",
@@ -245,7 +242,8 @@
       "theme": "Theme",
       "security": "Sicherheit",
       "telegram": "Telegram",
-      "session": "Sitzung"
+      "session": "Sitzung",
+      "ai": "KI-Assistent"
     },
     "totp": {
       "statusEnabled": "Zwei-Faktor ist an. Login benötigt einen 6-stelligen Code aus deiner Authenticator-App.",
@@ -798,5 +796,19 @@
       "library": "Creme-Papier, Sepia-Schrift, Karteikasten-Ästhetik.",
       "swiss": "12-Spalten-Raster, rot akzentuiert, Helvetica-Swiss-Typografie."
     }
+  },
+  "ai": {
+    "ask": "KI fragen",
+    "provider": "KI-Anbieter",
+    "file": "Datei: {{name}}",
+    "page": "Seite",
+    "pageAll": "alle",
+    "thinking": "{{name}} denkt nach…",
+    "placeholder": "Frag etwas dazu… (Enter zum Senden)",
+    "send": "Senden",
+    "settingsBody": "Stelle Fragen zu markiertem Text oder einer geöffneten Datei – mit den KI-Apps, in die du auf diesem Mac schon eingeloggt bist. Wähle deinen Standard:",
+    "installed": "Installiert — nutzt dein eigenes Konto",
+    "notInstalled": "Nicht eingerichtet — {{hint}}",
+    "needsLocalMode": "Verfügbar, wenn OpenStudy auf deinem eigenen Computer läuft (LOCAL_MODE=true in .env)."
   }
 }

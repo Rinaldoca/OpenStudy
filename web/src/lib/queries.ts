@@ -527,7 +527,7 @@ export function useFilesList(prefix: string) {
     queryKey: ["files", "list", prefix],
     queryFn: () =>
       api.get<FileEntry[]>("/api/files/list", { prefix }),
-    staleTime: 60_000, // listing is cheap; refetch on focus after a min
+    staleTime: 5_000, // listing is cheap; refetch on focus so Finder changes show up
   });
 }
 
@@ -599,20 +599,23 @@ export function useEvents(opts: { kind?: string; course_code?: string; limit?: n
   });
 }
 
-export function useSyncMoodle() {
+export function useLinkedFolder(folder: string | null) {
+  return useQuery({
+    queryKey: ["files", "linked", folder],
+    queryFn: () =>
+      api.get<{ local_mode: boolean; path: string | null }>("/api/files/linked-folder", { folder: folder! }),
+    enabled: Boolean(folder),
+  });
+}
+
+export function useLinkFolder() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (course?: string) => {
-      const path = course
-        ? `/api/files/sync-moodle?course=${encodeURIComponent(course)}`
-        : "/api/files/sync-moodle";
-      return api.post<{ ok: boolean; written_count: number; plan: { newOrChanged?: number; unchanged?: number; errors?: number }; errors: number; course?: string }>(
-        path,
-        {}
-      );
-    },
+    // Blocks until the user picks or cancels in the macOS dialog.
+    mutationFn: (folder: string) =>
+      api.post<{ folder: string; path: string | null }>("/api/files/link-folder", { folder }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["files", "list"] });
+      qc.invalidateQueries({ queryKey: ["files"] });
     },
   });
 }

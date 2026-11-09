@@ -6,6 +6,26 @@ versions follow [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+### Added — local mode: linked folders + Ask AI with your own subscriptions
+
+For running the backend directly on your own Mac (`LOCAL_MODE=true`, see
+INSTALL.md → *Local mode*). Off by default; server deploys are unchanged.
+
+- **Link folder** (replaces the Moodle *Sync* button in a course's Files tab):
+  opens the macOS folder picker and links the chosen folder to the course.
+  Files stay where they are and are read live — no upload, no sync. Linked
+  folders are a top-level symlink in the user's storage root; `_safe_resolve`
+  accepts the link's target only in local mode, and still refuses symlinks
+  *inside* it. Deleting or renaming the linked folder itself from the app is
+  refused (it would hit the real files).
+- **Ask AI**: select text anywhere (or press *Ask AI* in the file viewer) to
+  open a sidebar that answers with the AI CLIs you're already logged into —
+  `claude` (Claude Code), `agy` (Antigravity / Gemini) or `codex` (ChatGPT).
+  No API keys. The CLI runs with tools off / read-only in an empty temp dir and
+  only sees the prompt: the selection, plus the open file's text (for PDFs
+  just the pages around the one you name). Pick the default provider in
+  **Settings → AI assistant**. Backend: `app/routers/ai.py`.
+
 ### Added — static landing-only build
 
 - **`pnpm build:landing`** (`scripts/build-landing.mjs`) builds just the

@@ -91,3 +91,6 @@ scripts/_deprecated/
 # architecture decisions ahead of public release.
 docs/superpowers/
 
+
+# local dev file store
+.dev/

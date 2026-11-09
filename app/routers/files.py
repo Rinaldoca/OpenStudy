@@ -13,11 +13,16 @@ to `/opt/courses`). All routes are session-auth-gated.
   DELETE /api/files                    delete a file or folder (recursive)
   GET    /api/files/lecture-materials  files grouped by `NN_lecture` prefix
   GET    /api/files/search             full-text search via the file_index
+  GET    /api/files/linked-folder      where a course folder is linked to (LOCAL_MODE)
+  POST   /api/files/link-folder        pick a folder on this Mac for a course (LOCAL_MODE)
 """
 from __future__ import annotations
 
+import asyncio
 import os
+import subprocess
 import unicodedata
+from pathlib import Path
 from typing import Any, Optional
 
 import httpx
@@ -27,6 +32,7 @@ from fastapi.responses import FileResponse
 from .. import db
 from ..auth import require_user, User
 from ..intents import files as intent
+from ..services import storage as storage_svc
 
 
 _UMLAUT_MAP = str.maketrans({
@@ -144,6 +150,8 @@ async def delete(
     """Delete a file (`kind=file`) or a folder and everything under it
     (`kind=folder`, recursive)."""
     key = _safe_key(path)
+    if kind == "folder" and storage_svc.linked_folder(user.id, key):
+        raise HTTPException(400, "this folder is linked to a folder on your computer; delete files there instead")
     if kind == "file":
         try:
             await intent.delete(user.id, [key])
@@ -202,6 +210,9 @@ async def move(body: dict[str, Any] = Body(...), user: User = Depends(require_us
         raise HTTPException(400, "kind must be file or folder")
     if src == dst:
         return {"moved": []}
+    if kind == "folder" and storage_svc.linked_folder(user.id, src):
+        # Fan-out would move the real files out of the user's folder.
+        raise HTTPException(400, "this folder is linked to a folder on your computer; rename it there instead")
     if kind == "file":
         try:
             await intent.move(user.id, src, dst)
@@ -290,7 +301,6 @@ async def raw_file(path: str = Query(...), user: User = Depends(require_user)):
         raise HTTPException(404, f"not found: {path}")
     # Resolve via the storage layer so the same per-user traversal guard
     # applies (path resolves under STUDY_ROOT/<user_id>/).
-    from ..services import storage as storage_svc
     try:
         target = storage_svc._safe_resolve(user.id, path)
     except ValueError as exc:
@@ -368,3 +378,44 @@ async def sync_moodle(course: Optional[str] = Query(default=None)) -> dict[str, 
         "errors": plan.get("errors", 0),
         "course": course,
     }
+
+
+def _course_folder(raw: str) -> str:
+    key = _sanitize_path(_safe_key(raw))
+    if not key or "/" in key:
+        raise HTTPException(400, "expected a single course folder name")
+    return key
+
+
+@router.get("/linked-folder")
+async def linked_folder(folder: str = Query(...), user: User = Depends(require_user)) -> dict[str, Any]:
+    target = storage_svc.linked_folder(user.id, _course_folder(folder))
+    return {"local_mode": storage_svc.local_mode(), "path": str(target) if target else None}
+
+
+@router.post("/link-folder")
+async def link_folder(body: dict[str, Any] = Body(...), user: User = Depends(require_user)) -> dict[str, Any]:
+    """Open the macOS folder picker on this machine and link the chosen
+    folder to a course. Only in LOCAL_MODE: on a server there is nobody in
+    front of the screen, and the path would be the server's, not yours."""
+    if not storage_svc.local_mode():
+        raise HTTPException(403, "linking folders needs LOCAL_MODE=true (backend running on your own Mac)")
+    folder = _course_folder(body.get("folder") or "")
+    try:
+        proc = await asyncio.to_thread(
+            subprocess.run,
+            ["osascript", "-e", 'POSIX path of (choose folder with prompt "Choose the folder for this course")'],
+            capture_output=True, text=True, timeout=600,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise HTTPException(500, f"folder picker failed: {exc}") from exc
+    if proc.returncode != 0:
+        if "-128" in proc.stderr:  # user pressed Cancel
+            return {"folder": folder, "path": None}
+        raise HTTPException(500, f"folder picker failed: {proc.stderr.strip()}")
+    try:
+        return await storage_svc.link_folder(user.id, folder, Path(proc.stdout.strip()))
+    except FileExistsError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc

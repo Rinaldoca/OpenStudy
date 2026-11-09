@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { ExternalLink, FileText, Loader2, X } from "lucide-react";
+import { ExternalLink, FileText, Loader2, Sparkles, X } from "lucide-react";
+import { askAi, setOpenFile, useAiProviders } from "@/lib/ai";
 import { useFileSignedUrl } from "@/lib/queries";
 import { cn } from "@/lib/cn";
 
@@ -23,6 +24,13 @@ export function FileViewer({ path, onClose }: { path: string; onClose: () => voi
   const name = path.split("/").pop() || path;
   const ext = name.toLowerCase().split(".").pop() || "";
 
+  const ai = useAiProviders();
+  const aiEnabled = Boolean(ai.data?.local_mode && ai.data.providers.some((p) => p.installed));
+  useEffect(() => {
+    setOpenFile(path);
+    return () => setOpenFile(null);
+  }, [path]);
+
   // Close on Escape
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
@@ -45,6 +53,17 @@ export function FileViewer({ path, onClose }: { path: string; onClose: () => voi
           <p className="text-sm font-medium truncate">{name}</p>
           <p className="text-[11px] text-muted truncate">{path}</p>
         </div>
+        {aiEnabled && (
+          <button
+            type="button"
+            // Picks up text selected in text files; PDFs (iframe) send just the file.
+            onClick={() => askAi({ path, selection: window.getSelection()?.toString().trim() || undefined })}
+            className="touch-target inline-flex items-center gap-1.5 rounded-md px-2 text-sm text-muted hover:text-fg hover:bg-surface-2 transition-colors"
+          >
+            <Sparkles className="h-4 w-4" />
+            <span className="hidden sm:inline">Ask AI</span>
+          </button>
+        )}
         {data?.url && (
           <a
             href={data.url}

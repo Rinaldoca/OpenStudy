@@ -212,6 +212,37 @@ pnpm dev    # → http://localhost:5173, hot-reloads against the dockerised back
 
 ---
 
+### Local mode: run on your own Mac
+
+If OpenStudy is just for you, on your own computer, you can run the backend
+natively (Postgres can stay in Docker) and set `LOCAL_MODE=true` in `.env`.
+That unlocks two things a server can't do:
+
+- **Link folder** in a course's Files tab opens the macOS folder picker and
+  serves that folder's files live, wherever they are on disk.
+- **Ask AI**: select text or open a file and ask a question. Answers come from
+  the AI command-line tools you're logged into on this Mac, using your own
+  subscription: `claude` (Claude Code), `agy` (Antigravity) or `codex`
+  (ChatGPT). Install and sign in to whichever you use, then pick the default
+  in **Settings → AI assistant**.
+
+```bash
+docker run -d --name openstudy-dev-pg -p 127.0.0.1:5432:5432 \
+  --env-file .env.docker -v openstudy-dev-pg:/var/lib/postgresql/data \
+  postgres:16.15-alpine
+export PGHOST=127.0.0.1
+uv run --env-file .env --env-file .env.docker python scripts/run_migrations.py
+uv run --env-file .env --env-file .env.docker uvicorn app.main:app --reload --port 8000
+cd web && pnpm dev
+```
+
+Set `STUDY_ROOT` in `.env` to a folder on your Mac (e.g. `./.dev/courses`).
+Note that `uv --env-file` expands `$…` in values, which mangles
+`APP_PASSWORD_HASH` (`$argon2id$…`). Write the operator's hash straight into
+the `users` table instead of relying on `scripts/seed_operator_password.py`.
+
+Never set `LOCAL_MODE=true` on a shared or public deployment.
+
 ## 6. Put it on a public domain
 
 Required if you want Claude.ai or the Claude iOS app to reach the MCP

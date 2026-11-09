@@ -12,9 +12,11 @@ import {
   RefreshCw,
   Send,
   ShieldCheck,
+  Sparkles,
   User,
 } from "lucide-react";
 import { TotpCard } from "@/components/settings/totp-card";
+import { AiSettingsCard } from "@/components/ai/ask-ai";
 import { Link, useNavigate } from "react-router";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
@@ -100,6 +102,10 @@ export default function Settings() {
           >
             {t("settings.activity.openLog")} <ChevronRight className="h-4 w-4" />
           </Link>
+        </Section>
+
+        <Section icon={<Sparkles className="h-4 w-4" />} title={t("settings.sections.ai", "AI assistant")}>
+          <AiSettingsCard />
         </Section>
 
         <Section icon={<ShieldCheck className="h-4 w-4" />} title={t("settings.sections.security", "Security")}>

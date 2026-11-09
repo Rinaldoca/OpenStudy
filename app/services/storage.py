@@ -49,17 +49,35 @@ def _user_root(user_id: UUID) -> Path:
     return _root() / str(user_id)
 
 
+def local_mode() -> bool:
+    """LOCAL_MODE=true: the backend runs on the user's own machine (not a
+    server/container), so course folders may be linked to folders elsewhere
+    on disk. Never enable on a shared deployment."""
+    return os.environ.get("LOCAL_MODE", "").strip().lower() == "true"
+
+
+def linked_folder(user_id: UUID, folder: str) -> Path | None:
+    """Target of a linked course folder (a top-level symlink in the user's
+    root), or None if `folder` isn't linked."""
+    link = _user_root(user_id) / folder
+    return link.resolve() if folder and "/" not in folder and link.is_symlink() else None
+
+
 def _safe_resolve(user_id: UUID, rel: str) -> Path:
     """Join `rel` under `STUDY_ROOT/<user_id>/`, refusing escape via `..`
     or absolute path. Returns the absolute path. Raises ValueError on
     traversal attempt (above user_root, which also catches above
-    STUDY_ROOT)."""
+    STUDY_ROOT). In LOCAL_MODE a linked course folder's target counts as
+    inside, but nothing beyond it (symlinks *inside* it are still refused)."""
     user_root = _user_root(user_id).resolve()
     rel = (rel or "").lstrip("/")
     target = (user_root / rel).resolve()
-    if user_root != target and user_root not in target.parents:
-        raise ValueError(f"path escapes user root: {rel!r}")
-    return target
+    if user_root == target or user_root in target.parents:
+        return target
+    linked = linked_folder(user_id, rel.split("/", 1)[0]) if local_mode() else None
+    if linked and (linked == target or linked in target.parents):
+        return target
+    raise ValueError(f"path escapes user root: {rel!r}")
 
 
 def _course_code_from_path(p: str | None) -> str | None:
@@ -165,11 +183,15 @@ def _list_recursive_sync(user_id: UUID, prefix: str) -> list[str]:
         return []
     if not base.exists() or not base.is_dir():
         return []
-    user_root = _user_root(user_id).resolve()
+    # Build keys from the requested prefix, not the resolved path: a linked
+    # course folder resolves outside the user root.
+    key = "/".join(seg for seg in prefix.split("/") if seg)
     out: list[str] = []
     for p in base.rglob("*"):
-        if p.is_file() and not any(part.startswith(".") for part in p.relative_to(user_root).parts):
-            out.append(str(p.relative_to(user_root)).replace(os.sep, "/"))
+        rel = p.relative_to(base).as_posix()
+        full = f"{key}/{rel}" if key else rel
+        if p.is_file() and not any(part.startswith(".") for part in full.split("/")):
+            out.append(full)
     out.sort()
     return out
 
@@ -343,3 +365,34 @@ async def move(user_id: UUID, source: str, destination: str) -> dict[str, Any]:
     await asyncio.to_thread(_move_sync, user_id, source, destination)
     await _log(user_id, "storage:move", {"from": source, "to": destination})
     return {"from": source, "to": destination}
+
+
+# ── Linked course folders (LOCAL_MODE) ───────────────────────────────────────
+
+
+def _link_folder_sync(user_id: UUID, folder: str, target: Path) -> None:
+    root = _root().resolve()
+    target = target.resolve()
+    if not target.is_dir():
+        raise ValueError(f"not a folder: {target}")
+    if target == root or root in target.parents or target in root.parents:
+        raise ValueError("pick a folder outside OpenStudy's own file store")
+    link = _user_root(user_id) / folder
+    if link.is_symlink():
+        link.unlink()
+    elif link.exists():
+        if any(p.name != ".keep" for p in link.iterdir()):
+            raise FileExistsError(
+                f"{folder}/ already has files stored in OpenStudy; move them out first"
+            )
+        shutil.rmtree(link)
+    link.parent.mkdir(parents=True, exist_ok=True)
+    link.symlink_to(target, target_is_directory=True)
+
+
+async def link_folder(user_id: UUID, folder: str, target: Path) -> dict[str, Any]:
+    """Point course folder `folder` at `target`, a folder elsewhere on this
+    machine. Files stay where they are; the app reads them live."""
+    await asyncio.to_thread(_link_folder_sync, user_id, folder, target)
+    await _log(user_id, "storage:link", {"path": folder, "target": str(target)})
+    return {"folder": folder, "path": str(target)}

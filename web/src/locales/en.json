@@ -191,17 +191,14 @@
     "emptyFolder": "Empty folder.",
     "newFolder": "New folder",
     "upload": "Upload",
-    "syncMoodle": "Sync Moodle",
-    "syncMoodleCourse": "Sync {{code}}",
+    "linkFolder": "Link folder",
+    "linkFolderPicking": "Choose a folder in the dialog…",
+    "linkFolderDone": "Linked to {{path}}",
+    "linkFolderFailed": "Couldn't link folder — {{msg}}",
+    "linkedTo": "Linked to {{path}} — click to change",
     "searchPlaceholder": "Search inside files (PDFs, notebooks, notes)…",
     "searchFailed": "Search failed.",
     "searchEmpty": "No matches for \"{{q}}\".",
-    "syncStageLogin": "Logging in to Moodle…",
-    "syncStageScrape": "Scraping ASB, AML, RN, RA…",
-    "syncStageWrite": "Writing new files…",
-    "syncDoneNew": "Sync complete — {{count}} new files",
-    "syncDoneNoNew": "Sync complete — already up to date",
-    "syncFailed": "Sync failed — {{msg}}",
     "couldNotLoad": "Couldn't load files.",
     "newFolderPrompt": "New folder name:",
     "renamePrompt": "Rename \"{{name}}\" to:",
@@ -245,7 +242,8 @@
       "theme": "Theme",
       "security": "Security",
       "telegram": "Telegram",
-      "session": "Session"
+      "session": "Session",
+      "ai": "AI assistant"
     },
     "totp": {
       "statusEnabled": "Two-factor is on. Login requires a 6-digit code from your authenticator.",
@@ -798,5 +796,19 @@
       "library": "Cream paper, sepia type, card-catalog aesthetic.",
       "swiss": "12-column grid, red accent, Helvetica-era Swiss typography."
     }
+  },
+  "ai": {
+    "ask": "Ask AI",
+    "provider": "AI provider",
+    "file": "File: {{name}}",
+    "page": "Page",
+    "pageAll": "all",
+    "thinking": "{{name}} is thinking…",
+    "placeholder": "Ask about this… (Enter to send)",
+    "send": "Send",
+    "settingsBody": "Ask questions about selected text or an open file using the AI apps you're already logged into on this Mac. Pick your default:",
+    "installed": "Installed — uses your own account",
+    "notInstalled": "Not set up — {{hint}}",
+    "needsLocalMode": "Available when OpenStudy runs on your own computer (LOCAL_MODE=true in .env)."
   }
 }

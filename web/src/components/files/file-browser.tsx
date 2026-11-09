@@ -10,7 +10,7 @@ import {
   MoreHorizontal,
   Pencil,
   Presentation,
-  RefreshCw,
+  Link2,
   Search,
   Trash2,
   Upload,
@@ -25,7 +25,8 @@ import {
   useFileSearch,
   useFilesList,
   useMoveEntry,
-  useSyncMoodle,
+  useLinkFolder,
+  useLinkedFolder,
   useUploadFile,
   type FileEntry,
 } from "@/lib/queries";
@@ -55,8 +56,7 @@ export function FileBrowser({
   const createFolder = useCreateFolder();
   const deleteEntry = useDeleteEntry();
   const moveEntry = useMoveEntry();
-  const syncMoodle = useSyncMoodle();
-  const [syncStage, setSyncStage] = useState<string | null>(null);
+  const linkFolder = useLinkFolder();
   const [searchQuery, setSearchQuery] = useState("");
   const search = useFileSearch(searchQuery);
 
@@ -112,28 +112,19 @@ export function FileBrowser({
   // Detect current course from prefix (top-level segment matches a course's folder_name)
   const coursesQuery = useCourses();
   const topSegment = (rootPrefix || prefix).split("/")[0];
-  const currentCourse =
-    coursesQuery.data?.find((c) => (c.folder_name || c.code) === topSegment)?.code || null;
 
-  async function onSyncMoodle() {
-    const fastPath = Boolean(currentCourse);
-    setSyncStage(t("files.syncStageLogin"));
-    // Per-course is ~2-3s; full sync is ~8s — adjust stage timing accordingly
-    const t1 = setTimeout(() => setSyncStage(t("files.syncStageScrape")), fastPath ? 800 : 1500);
-    const t2 = setTimeout(() => setSyncStage(t("files.syncStageWrite")), fastPath ? 2200 : 6000);
+  // Only a course's own top-level folder can be linked.
+  const courseFolder =
+    coursesQuery.data?.some((c) => (c.folder_name || c.code) === topSegment) ? topSegment : null;
+  const linked = useLinkedFolder(courseFolder);
+
+  async function onLinkFolder() {
+    if (!courseFolder) return;
     try {
-      const result = await syncMoodle.mutateAsync(currentCourse ?? undefined);
-      if (result.written_count > 0) {
-        toast.success(t("files.syncDoneNew", { count: result.written_count }));
-      } else {
-        toast.success(t("files.syncDoneNoNew"));
-      }
+      const result = await linkFolder.mutateAsync(courseFolder);
+      if (result.path) toast.success(t("files.linkFolderDone", { path: result.path }));
     } catch (err) {
-      toast.error(t("files.syncFailed", { msg: (err as Error).message || "—" }));
-    } finally {
-      clearTimeout(t1);
-      clearTimeout(t2);
-      setSyncStage(null);
+      toast.error(t("files.linkFolderFailed", { msg: (err as Error).message || "—" }));
     }
   }
 
@@ -221,19 +212,28 @@ export function FileBrowser({
           ))}
         </div>
         <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={onSyncMoodle}
-            disabled={syncMoodle.isPending}
-            className="touch-target inline-flex items-center gap-2 rounded-md border border-border/60 bg-surface-2 hover:bg-surface-2/80 px-3 text-sm font-medium disabled:opacity-60 transition-colors min-w-[10rem] justify-center"
-          >
-            {syncMoodle.isPending ? (
-              <Loader2 className="h-4 w-4 animate-spin shrink-0" />
-            ) : (
-              <RefreshCw className="h-4 w-4 shrink-0" />
-            )}
-            <span className="truncate">{syncStage ?? (currentCourse ? t("files.syncMoodleCourse", { code: currentCourse }) : t("files.syncMoodle"))}</span>
-          </button>
+          {courseFolder && linked.data?.local_mode && (
+            <button
+              type="button"
+              onClick={onLinkFolder}
+              disabled={linkFolder.isPending}
+              title={linked.data.path ? t("files.linkedTo", { path: linked.data.path }) : undefined}
+              className="touch-target inline-flex items-center gap-2 rounded-md border border-border/60 bg-surface-2 hover:bg-surface-2/80 px-3 text-sm font-medium disabled:opacity-60 transition-colors max-w-[16rem]"
+            >
+              {linkFolder.isPending ? (
+                <Loader2 className="h-4 w-4 animate-spin shrink-0" />
+              ) : (
+                <Link2 className="h-4 w-4 shrink-0" />
+              )}
+              <span className="truncate">
+                {linkFolder.isPending
+                  ? t("files.linkFolderPicking")
+                  : linked.data.path
+                    ? linked.data.path.replace(/\/$/, "").split("/").pop()
+                    : t("files.linkFolder")}
+              </span>
+            </button>
+          )}
           <button
             type="button"
             onClick={onNewFolder}

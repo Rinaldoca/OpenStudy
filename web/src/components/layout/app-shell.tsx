@@ -10,6 +10,7 @@ import { useAppSettings, useCourses, useSession } from "@/lib/queries";
 import { applyCourseColors } from "@/lib/theme";
 import { applyTheme, normalizeTheme } from "@/lib/themes";
 import { useDocumentTitle, useHtmlLang } from "@/lib/document-head";
+import { AskAi } from "@/components/ai/ask-ai";
 
 // Inner Suspense fallback for sub-route chunk loads. Hover-prefetch on
 // links almost always avoids it firing at all; when it does (cold first
@@ -24,9 +25,12 @@ function RouteFallback() {
 
 function MainOutlet() {
   return (
-    <Suspense fallback={<RouteFallback />}>
-      <Outlet />
-    </Suspense>
+    <>
+      <Suspense fallback={<RouteFallback />}>
+        <Outlet />
+      </Suspense>
+      <AskAi />
+    </>
   );
 }
 

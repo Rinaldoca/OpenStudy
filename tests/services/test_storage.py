@@ -408,3 +408,37 @@ async def test_log_uses_paths_array_for_delete(client, db_conn, study_root):
         row = await cur.fetchone()
     assert row is not None
     assert row["course_code"] == "EXAM"
+
+
+# ── linked course folders (LOCAL_MODE) ───────────────────────────────────────
+
+
+def test_linked_course_folder(study_root, tmp_path, monkeypatch):
+    from app.services import storage
+
+    outside = tmp_path.parent / f"{tmp_path.name}-uni"
+    (outside / "week1").mkdir(parents=True)
+    (outside / "week1" / "slides.pdf").write_bytes(b"%PDF")
+    secret = tmp_path.parent / f"{tmp_path.name}-secret"
+    secret.mkdir()
+    (outside / "sneaky").symlink_to(secret)  # symlink *inside* the linked folder
+
+    storage._link_folder_sync(SENTINEL_USER_ID, "ANA", outside)
+
+    # Without LOCAL_MODE the link is treated like any other escape.
+    monkeypatch.delenv("LOCAL_MODE", raising=False)
+    with pytest.raises(ValueError):
+        storage._safe_resolve(SENTINEL_USER_ID, "ANA/week1/slides.pdf")
+
+    monkeypatch.setenv("LOCAL_MODE", "true")
+    assert storage._download_sync(SENTINEL_USER_ID, "ANA/week1/slides.pdf") == b"%PDF"
+    assert storage._list_recursive_sync(SENTINEL_USER_ID, "ANA") == ["ANA/week1/slides.pdf"]
+    for bad in ("ANA/../../x", "ANA/sneaky", "ANA/sneaky/f"):
+        with pytest.raises(ValueError):
+            storage._safe_resolve(SENTINEL_USER_ID, bad)
+
+    # A course folder that already holds uploaded files is never replaced.
+    (study_root / "BIO").mkdir()
+    (study_root / "BIO" / "notes.md").write_text("x")
+    with pytest.raises(FileExistsError):
+        storage._link_folder_sync(SENTINEL_USER_ID, "BIO", outside)
