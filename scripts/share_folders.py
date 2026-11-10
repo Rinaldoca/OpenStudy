@@ -1,11 +1,14 @@
-"""Share the operator's linked course folders with another account (LOCAL_MODE).
+"""Share the operator's course folders with another account.
 
     uv run --env-file .env --env-file .env.docker python scripts/share_folders.py friend@example.com
+    # on a Docker server (see INSTALL.md → Home server):
+    docker compose --env-file .env.docker exec openstudy uv run --no-sync python scripts/share_folders.py friend@example.com
 
-For every course folder the operator has linked to a folder on this Mac
-(Files → Link folder), the friend's account gets the same link — so both see
-the same files live — plus a copy of the course itself (name, colour, …) so
-it shows up in their Courses. Their tasks, topics, progress and settings stay
+For every course folder the operator has — linked to a folder on this Mac
+(Files → Link folder, LOCAL_MODE) or stored in OpenStudy's own file store
+(server) — the friend's account gets the same folder, so both see the same
+files live, plus a copy of the course itself (name, colour, …) so it shows up
+in their Courses. Their tasks, topics, progress and settings stay
 their own. Safe to re-run: existing courses/links are left alone.
 
 Note: edits are shared too — a file deleted or renamed by either of you is
@@ -40,10 +43,11 @@ async def main(email: str) -> int:
             return 1
 
         op_root = storage._user_root(operator)
-        links = sorted(p for p in op_root.iterdir() if p.is_symlink()) if op_root.exists() else []
+        links = sorted(p for p in op_root.iterdir() if p.is_dir() and not p.name.startswith(".")) if op_root.exists() else []
         if not links:
-            print("you haven't linked any course folders yet (Files → Link folder)")
+            print("you don't have any course folders yet")
             return 1
+        store = storage._root().resolve()
 
         op_courses = {c.folder_name or c.code: c for c in await courses_svc.list_courses(operator)}
         for link in links:
@@ -52,7 +56,14 @@ async def main(email: str) -> int:
                 print(f"= {link.name}: already shared")
             else:
                 try:
-                    storage._link_folder_sync(friend, link.name, target)
+                    if store in target.parents:  # server: share the operator's copy in the file store
+                        mine = storage._user_root(friend) / link.name
+                        if mine.exists() or mine.is_symlink():
+                            raise FileExistsError(f"{link.name}/ already exists in their account")
+                        mine.parent.mkdir(parents=True, exist_ok=True)
+                        mine.symlink_to(target, target_is_directory=True)
+                    else:
+                        storage._link_folder_sync(friend, link.name, target)
                     print(f"+ {link.name} → {target}")
                 except (FileExistsError, ValueError) as exc:
                     print(f"! {link.name}: {exc}")

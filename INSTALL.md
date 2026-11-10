@@ -17,6 +17,7 @@ is the operational walkthrough.
 3. [Generate secrets and write the env files](#3-generate-secrets-and-write-the-env-files)
 4. [Bring up the stack](#4-bring-up-the-stack)
 5. [Build and serve the frontend](#5-build-and-serve-the-frontend)
+   - [Home server over Tailscale](#home-server-over-tailscale) (24/7 box, your devices + a friend)
 6. [Put it on a public domain (optional, required for hosted Claude clients)](#6-put-it-on-a-public-domain)
 7. [Connect an MCP client](#7-connect-an-mcp-client)
 8. [Day-2 operations](#8-day-2-operations)
@@ -265,6 +266,138 @@ open dialogs on your screen. Edits to shared files (delete, rename, upload)
 affect both of you.
 
 Never set `LOCAL_MODE=true` on a shared or public deployment.
+
+## Home server over Tailscale
+
+Run OpenStudy 24/7 on a box at home (any Linux machine with Docker — a mini PC,
+NAS, Raspberry Pi 4/5) and reach it from your laptop, iPad and a friend's
+devices through Tailscale. Nothing is exposed to the public internet.
+
+**What changes versus running on your Mac:** the server runs the Docker stack,
+so `LOCAL_MODE` stays **off**. Ask AI, the quiz and *Link folder* (they use the
+`claude`/`codex` CLIs and the macOS folder picker on *your* computer) are not
+available there; everything else is — courses, files, PDF editor, tasks, MCP.
+
+### 1. One-time Tailscale setup
+
+1. Install Tailscale on the server and sign in: `curl -fsSL https://tailscale.com/install.sh | sh && sudo tailscale up`.
+2. In the [admin console](https://login.tailscale.com/admin/dns) → **DNS**, make sure
+   **MagicDNS** and **HTTPS Certificates** are enabled. HTTPS is not optional: the
+   login cookie is `Secure`, and iPadOS needs HTTPS to install the app to the Home Screen.
+3. Install Tailscale on your iPad / laptop with the same account.
+4. Note the server's address: `tailscale status` → e.g. `homeserver.tail1234.ts.net`.
+
+### 2. Put the code on the server
+
+```bash
+sudo git clone -b local-mode-ai git@github.com:YOU/OpenStudy.git /opt/openstudy
+sudo chown -R $USER /opt/openstudy && cd /opt/openstudy
+sudo mkdir -p /opt/courses /opt/postgres-data
+sudo chown 1000:1000 /opt/courses        # the backend container runs as uid 1000
+```
+
+(`./deploy.sh --pull` later updates it from git. It resets to `origin/main`;
+set `OPENSTUDY_DEPLOY_REF=origin/local-mode-ai` to follow another branch.)
+
+### 3. Env files
+
+```bash
+cp .env.example .env
+cat > .env.docker <<EOF
+POSTGRES_USER=openstudy
+POSTGRES_PASSWORD=$(openssl rand -hex 24)
+POSTGRES_DB=openstudy
+PUBLIC_SITE_URL=https://homeserver.tail1234.ts.net
+EOF
+chmod 600 .env .env.docker
+```
+
+Edit `.env` (see section 3 for the generators): `SESSION_SECRET`,
+`INTERNAL_API_SECRET`, `SECRETS_ENCRYPTION_KEY`, `OPERATOR_EMAIL`, and
+
+```
+PUBLIC_URL=https://homeserver.tail1234.ts.net
+LOCAL_MODE=false
+EXPOSE_DOCS=false
+SIGNUPS_ENABLED=false
+```
+
+`APP_PASSWORD_HASH` only matters on a fresh database. Make one with
+`docker compose --env-file .env.docker run --rm --no-deps openstudy uv run --no-sync python -m app.tools.hashpw`
+(after the first `./deploy.sh`), or skip it if you restore your Mac's data in step 5.
+
+### 4. Start it and publish it on the tailnet
+
+```bash
+./deploy.sh
+sudo tailscale serve --bg --https=443 http://127.0.0.1:8080
+tailscale serve status     # → https://homeserver.tail1234.ts.net  →  127.0.0.1:8080
+```
+
+Open `https://homeserver.tail1234.ts.net` from any device on your tailnet.
+Never use `tailscale funnel` — that is the public internet.
+The stack restarts by itself after a reboot (`restart: unless-stopped`) and
+`tailscale serve --bg` is persistent.
+
+### 5. Move your data from the Mac
+
+Skip this for a fresh start. Otherwise, **on the Mac** (dev Postgres container
+`openstudy-dev-pg`, courses in `.dev/courses`):
+
+```bash
+# database (use the POSTGRES_USER / POSTGRES_DB from the Mac's .env.docker)
+docker exec openstudy-dev-pg pg_dump -U openstudy -d openstudy --clean --if-exists --no-owner > openstudy.sql
+# files — -L copies what linked folders point at instead of copying the symlink itself
+rsync -avL --rsync-path="sudo rsync" .dev/courses/ you@homeserver:/opt/courses/
+scp openstudy.sql you@homeserver:/opt/openstudy/
+# secrets that must match the dump, or encrypted per-user settings become unreadable:
+grep SECRETS_ENCRYPTION_KEY .env      # copy this value into the server's .env
+```
+
+Then **on the server**:
+
+```bash
+cd /opt/openstudy
+sudo chown -R 1000:1000 /opt/courses
+docker compose --env-file .env.docker stop openstudy     # no open connections while restoring
+docker exec -i openstudy-postgres psql -U openstudy -d openstudy < openstudy.sql
+./deploy.sh --skip-build
+```
+
+Log in with the same email and password as on the Mac.
+
+### 6. Let a friend in
+
+1. **Tailscale access** — admin console → **Machines** → your server → **⋯ → Share…** →
+   their Tailscale email (they need a free Tailscale account; they accept the
+   invite, install the app, and open the same `https://homeserver…ts.net` URL).
+   Sharing exposes only this one machine, not the rest of your tailnet.
+2. **Their account** — set `SIGNUPS_ENABLED=true` in `.env`, run
+   `./deploy.sh --skip-build`, let them sign up at `/login`. With
+   `EMAIL_BACKEND=console` the verification link is in
+   `docker compose --env-file .env.docker logs openstudy | grep -i verify`;
+   send it to them. Then set `SIGNUPS_ENABLED=false` and redeploy.
+3. **Same subjects** — give them your course folders (same files live, their own
+   tasks / progress / notes):
+
+   ```bash
+   docker compose --env-file .env.docker exec openstudy \
+     uv run --no-sync python scripts/share_folders.py friend@example.com
+   ```
+
+Edits to shared files (delete, rename, upload) affect both of you.
+
+### 7. iPad
+
+Open the URL in **Safari** → Share → **Add to Home Screen**; it launches
+full-screen like an app. The iPad needs the Tailscale app connected (VPN
+toggle on) whenever you use it away from home.
+
+### Backups
+
+Everything lives in `/opt/postgres-data` and `/opt/courses`. A nightly cron is
+enough: `docker exec openstudy-postgres pg_dump -U openstudy openstudy | gzip > /backups/openstudy-$(date +%F).sql.gz`
+and `rsync -a /opt/courses/ /backups/courses/`.
 
 ## 6. Put it on a public domain
 

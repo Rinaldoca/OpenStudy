@@ -83,7 +83,11 @@ def _safe_resolve(user_id: UUID, rel: str) -> Path:
     target = (user_root / rel).resolve()
     if user_root == target or user_root in target.parents:
         return target
-    linked = linked_folder(user_id, rel.split("/", 1)[0]) if local_mode() else None
+    linked = linked_folder(user_id, rel.split("/", 1)[0])
+    # Outside LOCAL_MODE only a link into the file store itself counts — that is
+    # how scripts/share_folders.py shares the operator's copy with a friend.
+    if linked and not local_mode() and _root().resolve() not in linked.parents:
+        linked = None
     if linked and (linked == target or linked in target.parents):
         return target
     raise ValueError(f"path escapes user root: {rel!r}")

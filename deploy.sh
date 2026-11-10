@@ -21,7 +21,7 @@
 #   7. PASS → prune dangling images, log success.
 #      FAIL → re-tag :previous as :latest, recreate container, wait for old health.
 #
-# Logs to /var/log/openstudy-deploy.log (root-owned).
+# Logs to /var/log/openstudy-deploy.log (root-owned), or ./deploy.log if that isn't writable.
 
 set -euo pipefail
 
@@ -32,7 +32,9 @@ cd "$(dirname "$0")"
 # without $-substitution, so APP_PASSWORD_HASH stays intact.
 COMPOSE="docker compose --env-file .env.docker"
 
+# Root-owned /var/log when we can write it; otherwise ./deploy.log (home server, non-root user).
 LOG=/var/log/openstudy-deploy.log
+touch "$LOG" 2>/dev/null || LOG="$PWD/deploy.log"
 HEALTH_URL=http://127.0.0.1:8000/api/health
 HEALTH_TIMEOUT=60   # seconds
 HEALTH_INTERVAL=2   # seconds
@@ -124,7 +126,7 @@ log "validating docker-compose.yml..."
 $COMPOSE config -q || { err "compose validation failed"; exit 1; }
 
 log "checking disk space (need ≥ 1 GB free)..."
-free_kb=$(df --output=avail / | tail -1)
+free_kb=$(df -Pk / | awk 'NR==2 {print $4}')
 if [ "$free_kb" -lt 1048576 ]; then
     err "low disk: only $((free_kb/1024)) MB free on /"
     exit 1

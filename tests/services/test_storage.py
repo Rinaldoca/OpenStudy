@@ -444,6 +444,25 @@ def test_linked_course_folder(study_root, tmp_path, monkeypatch):
         storage._link_folder_sync(SENTINEL_USER_ID, "BIO", outside)
 
 
+def test_shared_folder_inside_file_store(study_root, monkeypatch):
+    """Server mode: a friend's symlink to the operator's own folder works
+    without LOCAL_MODE; a symlink to anywhere else still doesn't."""
+    from uuid import uuid4
+    from app.services import storage
+
+    monkeypatch.delenv("LOCAL_MODE", raising=False)
+    (study_root / "ANA").mkdir()
+    (study_root / "ANA" / "slides.pdf").write_bytes(b"%PDF")
+    friend = uuid4()
+    (study_root.parent / str(friend)).mkdir()
+    (study_root.parent / str(friend) / "ANA").symlink_to(study_root / "ANA", target_is_directory=True)
+    assert storage._download_sync(friend, "ANA/slides.pdf") == b"%PDF"
+
+    (study_root.parent / str(friend) / "OUT").symlink_to(study_root.parent.parent, target_is_directory=True)
+    with pytest.raises(ValueError):
+        storage._safe_resolve(friend, "OUT/x")
+
+
 def test_machine_access_is_operator_only(monkeypatch):
     from uuid import uuid4
     from app.services import storage
