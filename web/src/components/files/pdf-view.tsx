@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { toast } from "sonner";
 import {
+  Camera,
   Download,
   Eraser,
   FilePlus2,
   Highlighter,
+  ImageDown,
   ImagePlus,
   LassoSelect,
   Loader2,
@@ -551,6 +554,9 @@ function PdfPage({
   const selItems = tool === "lasso" ? (notes?.items ?? []).filter((x) => picked.has(x)) : [];
   const hasSel = selStrokes.length + selItems.length > 0;
   const selBox = hasSel ? boundsOf(selStrokes, selItems) : null;
+  // The lasso loop's bounding box: what a screenshot captures (even if no notes were picked).
+  const [loopBox, setLoopBox] = useState<Box | null>(null);
+  const area = tool === "lasso" ? (loopBox ?? selBox) : null;
 
   useEffect(() => {
     const el = ref.current;
@@ -634,6 +640,7 @@ function PdfPage({
         setMoveSel({ x0: pt[0], y0: pt[1], dx: 0, dy: 0 }); // drag the selection
       } else {
         setPicked(new Set());
+        setLoopBox(null);
         setLasso(pt);
       }
     } else if (tool === "pen" || tool === "hl") {
@@ -695,11 +702,14 @@ function PdfPage({
       }
       setPicked(next);
       setLasso(null);
+      const loop = boundsOf([{ c: "", w: 0, pts: lasso }], []);
+      setLoopBox(loop.w > 4 && loop.h > 4 ? loop : null); // a tap isn't an area
       return;
     }
     if (moveSel) {
       const { dx, dy } = moveSel;
       setMoveSel(null);
+      setLoopBox(null); // the notes moved away from the loop; screenshots follow them
       if (Math.abs(dx) + Math.abs(dy) >= 1) editSelection((st) => ({ ...st, pts: st.pts.map((v, i) => round(v + (i % 2 ? dy : dx))) }), (it) => ({ ...it, x: round(it.x + dx), y: round(it.y + dy) }));
       return;
     }
@@ -731,22 +741,57 @@ function PdfPage({
     deleteSelectionRef.current = deleteSelection;
   });
 
-  // Backspace/Delete removes the selection, Escape clears it.
+  // Backspace/Delete removes the selection, Escape clears it (and the screenshot area).
+  const hasArea = !!area;
   useEffect(() => {
-    if (!hasSel) return;
+    if (!hasSel && !hasArea) return;
     const onKey = (e: KeyboardEvent) => {
       if ((e.target as HTMLElement)?.closest?.("input, textarea, [contenteditable]")) return;
-      if (e.key === "Backspace" || e.key === "Delete") {
+      if ((e.key === "Backspace" || e.key === "Delete") && hasSel) {
         e.preventDefault();
         deleteSelectionRef.current();
       } else if (e.key === "Escape") {
         e.stopPropagation(); // don't close the viewer
         setPicked(new Set());
+        setLoopBox(null);
       }
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [hasSel]);
+  }, [hasSel, hasArea]);
+
+  /** Render `r` (points) to a PNG: the PDF page re-rendered sharp at ~216 dpi, notes on top. */
+  async function snapshot(r: Box): Promise<Blob> {
+    const k = Math.min(3, Math.sqrt(MAX_CANVAS_PIXELS / Math.max(1, r.w * r.h)));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(r.w * k));
+    canvas.height = Math.max(1, Math.round(r.h * k));
+    const g = canvas.getContext("2d")!;
+    g.fillStyle = "#fff";
+    g.fillRect(0, 0, canvas.width, canvas.height);
+    if (n) {
+      const page = await doc.getPage(n);
+      const viewport = page.getViewport({ scale: k, offsetX: -r.x * k, offsetY: -r.y * k });
+      await page.render({ canvas, viewport }).promise;
+    }
+    g.setTransform(k, 0, 0, k, -r.x * k, -r.y * k); // draw notes in page points
+    await drawNotes(g, notes);
+    return new Promise((ok, fail) => canvas.toBlob((b) => (b ? ok(b) : fail(new Error("render failed"))), "image/png"));
+  }
+  function copyShot(r: Box) {
+    const png = snapshot(r);
+    // Pass the promise (not the blob) so the click still counts as the user's gesture.
+    navigator.clipboard
+      .write([new ClipboardItem({ "image/png": png })])
+      .then(() => toast.success("Screenshot copied — paste it anywhere (⌘V)"))
+      .catch(async () => {
+        saveBlob(await png, `page-${n ?? "blank"}.png`); // no clipboard access: download instead
+        toast.message("Couldn't copy — saved the screenshot instead");
+      });
+  }
+  async function saveShot(r: Box) {
+    saveBlob(await snapshot(r), `page-${n ?? "blank"}.png`);
+  }
 
   // Select, move and resize images and text boxes (select + text tools).
   function itemDown(e: React.PointerEvent, i: number, mode: Drag["mode"]) {
@@ -869,6 +914,9 @@ function PdfPage({
         {lasso && (
           <polygon points={lasso.join(" ")} fill="rgb(37 99 235 / 0.06)" stroke="#2563eb" strokeWidth={1 / scale} strokeDasharray={`${4 / scale} ${3 / scale}`} />
         )}
+        {area && !selBox && (
+          <rect x={area.x} y={area.y} width={area.w} height={area.h} fill="rgb(37 99 235 / 0.04)" stroke="#2563eb" strokeWidth={1.2 / scale} strokeDasharray={`${5 / scale} ${4 / scale}`} />
+        )}
         {selBox && (
           <rect
             x={selBox.x - 4 + (moveSel?.dx ?? 0)}
@@ -883,13 +931,33 @@ function PdfPage({
           />
         )}
       </svg>
-      {selBox && !moveSel && (
-        // Actions for the lasso selection: recolour ink/text, delete.
+      {area && !moveSel && (
+        // Actions for the lasso: screenshot the area; for picked notes also recolour / delete.
         <div
           className="absolute z-10 flex flex-wrap items-center gap-1 rounded-2xl border border-border/60 bg-surface px-1.5 py-1 shadow-lg max-w-[19rem]"
-          style={{ left: selBox.x * scale, top: Math.max(0, (selBox.y - 4) * scale - 44) }}
+          style={{ left: Math.min(area.x, selBox?.x ?? area.x) * scale, top: Math.max(0, (Math.min(area.y, selBox?.y ?? area.y) - 4) * scale - 44) }}
+          onPointerDown={(e) => e.stopPropagation()}
         >
-          {PEN_COLORS.map((c) => (
+          <button
+            type="button"
+            title="Copy screenshot of this area"
+            aria-label="Copy screenshot"
+            onClick={() => copyShot(area)}
+            className="h-7 w-7 inline-flex items-center justify-center rounded-full hover:bg-surface-2"
+          >
+            <Camera className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            title="Save screenshot as PNG"
+            aria-label="Save screenshot"
+            onClick={() => void saveShot(area)}
+            className="h-7 w-7 inline-flex items-center justify-center rounded-full hover:bg-surface-2"
+          >
+            <ImageDown className="h-4 w-4" />
+          </button>
+          {selBox && <span className="mx-0.5 h-5 w-px bg-border/60" />}
+          {selBox && PEN_COLORS.map((c) => (
             <button
               key={c}
               type="button"
@@ -899,20 +967,24 @@ function PdfPage({
               style={{ background: c }}
             />
           ))}
-          <CustomColor
-            small
-            value="#000000"
-            onChange={(c) => editSelection((st) => (st.hl ? st : { ...st, c }), (it) => (it.t === "text" ? { ...it, c } : it))}
-          />
-          <button
-            type="button"
-            title="Delete (⌫)"
-            aria-label="Delete selection"
-            onClick={deleteSelection}
-            className="h-7 w-7 inline-flex items-center justify-center rounded-full text-critical hover:bg-surface-2"
-          >
-            <Trash2 className="h-4 w-4" />
-          </button>
+          {selBox && (
+            <>
+              <CustomColor
+                small
+                value="#000000"
+                onChange={(c) => editSelection((st) => (st.hl ? st : { ...st, c }), (it) => (it.t === "text" ? { ...it, c } : it))}
+              />
+              <button
+                type="button"
+                title="Delete (⌫)"
+                aria-label="Delete selection"
+                onClick={deleteSelection}
+                className="h-7 w-7 inline-flex items-center justify-center rounded-full text-critical hover:bg-surface-2"
+              >
+                <Trash2 className="h-4 w-4" />
+              </button>
+            </>
+          )}
         </div>
       )}
       {itemsInteractive && active && !drag && notes?.items?.[active.i] && (() => {
@@ -1168,6 +1240,72 @@ async function downscale(file: Blob): Promise<{ src: string; w: number; h: numbe
     w: canvas.width * 0.75, // px → pt at 96 dpi
     h: canvas.height * 0.75,
   };
+}
+
+type Box = { x: number; y: number; w: number; h: number };
+
+function saveBlob(blob: Blob, name: string) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
+}
+
+/** Draw a page's notes on a 2D canvas (already transformed to page points) — the screenshot's overlay. */
+async function drawNotes(g: CanvasRenderingContext2D, notes?: PageNotes) {
+  for (const s of notes?.strokes ?? []) {
+    const pts = s.pts.length === 2 ? [...s.pts, ...s.pts] : s.pts;
+    g.save();
+    g.beginPath();
+    g.moveTo(pts[0], pts[1]);
+    for (let i = 2; i < pts.length - 1; i += 2) g.lineTo(pts[i], pts[i + 1]);
+    g.strokeStyle = s.c;
+    g.lineWidth = s.w;
+    g.lineCap = "round";
+    g.lineJoin = "round";
+    if (s.hl) {
+      g.globalAlpha = 0.35;
+      g.globalCompositeOperation = "multiply";
+    }
+    g.stroke();
+    g.restore();
+  }
+  for (const it of notes?.items ?? []) {
+    if (it.t === "img") {
+      const img = new Image();
+      img.src = it.src;
+      await img.decode().catch(() => {});
+      g.drawImage(img, it.x, it.y, it.w, it.h);
+      continue;
+    }
+    g.fillStyle = it.c;
+    g.font = `${it.size}px Helvetica, Arial, sans-serif`;
+    g.textBaseline = "top";
+    const lh = it.size * 1.25;
+    const lines = it.w ? wrapLines(g, it.text, it.w) : it.text.split("\n");
+    lines.forEach((line, i) => g.fillText(line, it.x, it.y + i * lh + (lh - it.size) / 2));
+  }
+}
+
+/** Word-wrap like the on-page text box (pre-wrap, break long words). */
+function wrapLines(g: CanvasRenderingContext2D, text: string, width: number) {
+  const out: string[] = [];
+  for (const para of text.split("\n")) {
+    let line = "";
+    for (const word of para.split(/(\s+)/)) {
+      const next = line + word;
+      if (g.measureText(next).width <= width || !line) {
+        line = next;
+      } else {
+        out.push(line.trimEnd());
+        line = word.trimStart();
+      }
+    }
+    out.push(line);
+  }
+  return out;
 }
 
 function pointInPolygon(x: number, y: number, poly: number[]) {
