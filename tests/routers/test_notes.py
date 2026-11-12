@@ -49,3 +49,25 @@ def test_text_box_wraps_at_its_width():
     assert len(words) == 16  # nothing cut off
     assert max(w[2] for w in words) <= 20 + 120 + 1  # wrapped inside the box
     assert len({round(w[1]) for w in words}) > 1  # on several lines
+
+
+def test_ops_merge_two_editors_without_overwriting():
+    from app.routers.notes import apply_ops, ensure_ids
+
+    doc = ensure_ids({"pages": {"p1": {"strokes": [{"c": "#000", "w": 2, "pts": [0, 0, 1, 1]}]}}})
+    old_id = doc["pages"]["p1"]["strokes"][0]["id"]
+    # Lucas adds a stroke; meanwhile his friend erases the old one and adds a text box.
+    apply_ops(doc, [{"op": "put", "slot": "p1", "kind": "strokes", "el": {"id": "lucas1", "c": "#f00", "w": 2, "pts": [5, 5]}}])
+    apply_ops(doc, [
+        {"op": "del", "slot": "p1", "kind": "strokes", "id": old_id},
+        {"op": "put", "slot": "p1", "kind": "items", "el": {"id": "friend1", "t": "text", "text": "why?", "x": 1, "y": 1, "size": 14, "c": "#000"}},
+    ])
+    page = doc["pages"]["p1"]
+    assert [s["id"] for s in page["strokes"]] == ["lucas1"]
+    assert page["items"][0]["text"] == "why?"
+    # Editing an element replaces it in place; layout ops set the page order.
+    apply_ops(doc, [{"op": "put", "slot": "p1", "kind": "items", "el": {**page["items"][0], "text": "why |y|>=1?"}},
+                    {"op": "layout", "layout": ["p1", "b:new"]},
+                    {"op": "nonsense"}, {"op": "del", "slot": "p1", "kind": "strokes"}])  # junk is ignored
+    assert len(page["items"]) == 1 and page["items"][0]["text"] == "why |y|>=1?"
+    assert doc["layout"] == ["p1", "b:new"]

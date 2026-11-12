@@ -32,11 +32,11 @@ import { cn } from "@/lib/cn";
  * Coordinates are PDF points, origin top-left — see app/routers/notes.py. */
 
 type PdfJs = typeof import("pdfjs-dist");
-type Stroke = { c: string; w: number; hl?: boolean; pts: number[] };
+type Stroke = { id?: string; c: string; w: number; hl?: boolean; pts: number[] };
 type Item =
-  | { t: "img"; src: string; x: number; y: number; w: number; h: number }
+  | { id?: string; t: "img"; src: string; x: number; y: number; w: number; h: number }
   // w/h: the text box (wraps at w). Notes saved before boxes existed have neither.
-  | { t: "text"; text: string; x: number; y: number; w?: number; h?: number; size: number; c: string };
+  | { id?: string; t: "text"; text: string; x: number; y: number; w?: number; h?: number; size: number; c: string };
 type Active = { slot: string; i: number; editing?: boolean } | null;
 type PageNotes = { strokes?: Stroke[]; items?: Item[] };
 type Notes = { layout?: string[]; pages: Record<string, PageNotes> };
@@ -70,10 +70,18 @@ export function PdfView({ url, path }: { url: string; path: string }) {
   const [pageLabel, setPageLabel] = useState("");
   const [failed, setFailed] = useState(false);
 
+  // Notes are shared with everyone who can open this file (see app/routers/notes.py).
+  // `base` is the server's copy at `version`; `pending` are my changes not yet sent.
+  // What's shown = base + pending. Others' changes arrive by polling.
   const [notes, setNotes] = useState<Notes | null>(null);
   const notesRef = useRef<Notes | null>(null);
-  const history = useRef<Notes[]>([]);
-  const dirty = useRef(false);
+  const base = useRef<Notes | null>(null);
+  const version = useRef(0);
+  const pending = useRef<Op[]>([]);
+  const inflight = useRef(false);
+  const history = useRef<Op[][]>([]); // per step: the ops that revert one of *my* changes
+  const flushTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const defaultLayout = useRef<string[]>([]);
   const [saveState, setSaveState] = useState<"saved" | "saving" | "error">("saved");
 
   const [tool, setTool] = useState<Tool>("select");
@@ -104,48 +112,104 @@ export function PdfView({ url, path }: { url: string; path: string }) {
     };
   }, [url]);
 
-  // ── Load + autosave notes ──
+  // ── Shared notes: load, send my changes, pick up others' ──
+  const show = useCallback((n: Notes) => {
+    notesRef.current = n;
+    setNotes(n);
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
+    base.current = null;
+    pending.current = [];
+    history.current = [];
     api
-      .get<{ data: Notes | null }>("/api/notes", { path })
-      .then((r) => !cancelled && setNotes(r.data ?? { pages: {} }))
-      .catch(() => !cancelled && setNotes({ pages: {} }));
+      .get<{ version: number; data: Notes }>("/api/notes", { path })
+      .then((r) => {
+        if (cancelled) return;
+        base.current = r.data;
+        version.current = r.version;
+        show(r.data);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        show({ pages: {} });
+        setSaveState("error");
+      });
     return () => {
       cancelled = true;
     };
-  }, [path]);
+  }, [path, show]);
 
-  const save = useCallback(async () => {
-    if (!dirty.current || !notesRef.current) return;
-    dirty.current = false;
-    setSaveState("saving");
-    try {
-      await apiFetch("/api/notes", { method: "PUT", body: { path, data: notesRef.current } });
-      setSaveState(dirty.current ? "saving" : "saved");
-    } catch {
-      dirty.current = true;
-      setSaveState("error");
-    }
-  }, [path]);
-
-  useEffect(() => {
-    notesRef.current = notes;
-    if (!dirty.current) return;
-    const t = setTimeout(save, 1200);
-    return () => clearTimeout(t);
-  }, [notes, save]);
-  useEffect(() => () => void save(), [save]); // flush when the viewer closes
-
-  const update = useCallback((fn: (n: Notes) => Notes) => {
-    setNotes((prev) => {
-      if (!prev) return prev;
-      history.current.push(prev);
-      if (history.current.length > 100) history.current.shift();
-      dirty.current = true;
-      return fn(prev);
-    });
+  const flushRef = useRef<() => Promise<void>>(async () => {});
+  const schedule = useCallback(() => {
+    clearTimeout(flushTimer.current);
+    flushTimer.current = setTimeout(() => void flushRef.current(), 400);
   }, []);
+  useEffect(() => {
+    flushRef.current = async () => {
+      if (inflight.current || !pending.current.length || !base.current) return;
+      inflight.current = true;
+      setSaveState("saving");
+      const sent = pending.current;
+      pending.current = [];
+      try {
+        const r = await apiFetch<{ version: number; data?: Notes }>("/api/notes/ops", {
+          method: "POST",
+          body: { path, base: version.current, ops: sent },
+        });
+        version.current = r.version;
+        if (r.data) {
+          // Someone else changed it meanwhile: rebuild from the server's copy + my unsent changes.
+          base.current = r.data;
+          show(reuseUnchanged(applyOps(r.data, pending.current), notesRef.current));
+        } else {
+          base.current = applyOps(base.current, sent);
+        }
+        setSaveState(pending.current.length ? "saving" : "saved");
+      } catch {
+        pending.current = [...sent, ...pending.current]; // retry with the next change / tick
+        setSaveState("error");
+      } finally {
+        inflight.current = false;
+        if (pending.current.length) schedule();
+      }
+    };
+  }, [path, show, schedule]);
+  useEffect(() => () => void flushRef.current(), []); // send what's left when the viewer closes
+
+  // Poll for the other person's changes (every 3 s while visible and idle).
+  useEffect(() => {
+    const t = setInterval(async () => {
+      if (document.hidden || inflight.current || pending.current.length || !base.current) return;
+      try {
+        const r = await api.get<{ version: number; data?: Notes }>("/api/notes", { path, since: version.current });
+        if (!r.data || r.version === version.current || inflight.current || pending.current.length) return;
+        version.current = r.version;
+        base.current = r.data;
+        show(reuseUnchanged(r.data, notesRef.current));
+      } catch {
+        /* offline for a moment; next tick retries */
+      }
+    }, 3000);
+    return () => clearInterval(t);
+  }, [path, show]);
+
+  const update = useCallback(
+    (fn: (n: Notes) => Notes) => {
+      const prev = notesRef.current;
+      if (!prev) return;
+      const next = withIds(fn(prev));
+      const ops = diffNotes(prev, next, defaultLayout.current);
+      if (!ops.length) return;
+      history.current.push(diffNotes(next, prev, defaultLayout.current));
+      if (history.current.length > 100) history.current.shift();
+      pending.current.push(...ops);
+      show(next);
+      schedule();
+    },
+    [show, schedule]
+  );
   // The selected image/text box (one at a time, across pages); `editing` = typing in it.
   const [active, setActive] = useState<Active>(null);
   const activeRef = useRef<Active>(null);
@@ -153,16 +217,20 @@ export function PdfView({ url, path }: { url: string; path: string }) {
     activeRef.current = active;
   }, [active]);
 
+  // Undo reverts only my own last change — never the other person's.
   const undo = useCallback(() => {
+    const inv = history.current.pop();
+    if (!inv || !notesRef.current) return;
     setActive(null); // indices may no longer match
-    const prev = history.current.pop();
-    if (prev) {
-      dirty.current = true;
-      setNotes(prev);
-    }
-  }, []);
+    pending.current.push(...inv);
+    show(applyOps(notesRef.current, inv));
+    schedule();
+  }, [show, schedule]);
 
   const numPages = doc?.numPages ?? 0;
+  useEffect(() => {
+    defaultLayout.current = Array.from({ length: numPages }, (_, i) => `p${i + 1}`);
+  }, [numPages]);
   const layoutOf = useCallback(
     (n: Notes) => n.layout ?? Array.from({ length: numPages }, (_, i) => `p${i + 1}`),
     [numPages]
@@ -341,7 +409,11 @@ export function PdfView({ url, path }: { url: string; path: string }) {
   }, [doc, notesLoaded, notes?.layout]);
 
   async function exportPdf() {
-    await save();
+    // Make sure my latest strokes are on the server before it renders the export.
+    for (let i = 0; i < 50 && (pending.current.length || inflight.current); i++) {
+      void flushRef.current();
+      await new Promise((r) => setTimeout(r, 100));
+    }
     window.location.href = `${API_BASE}/api/notes/export?path=${encodeURIComponent(path)}`;
   }
 
@@ -441,7 +513,7 @@ export function PdfView({ url, path }: { url: string; path: string }) {
             <ToolButton label="Undo" onClick={undo} icon={Undo2} />
             <ToolButton label="Export PDF with notes" onClick={() => void exportPdf()} icon={Download} />
             <span
-              title={saveState === "error" ? "Couldn't save — retrying on next change" : saveState === "saving" ? "Saving…" : "Saved"}
+              title={saveState === "error" ? "Couldn't sync — retrying" : saveState === "saving" ? "Syncing…" : "Synced — shared with everyone who has this file"}
               className={cn(
                 "mx-1.5 h-2 w-2 shrink-0 rounded-full",
                 saveState === "saved" ? "bg-ok" : saveState === "saving" ? "bg-muted animate-pulse" : "bg-critical"
@@ -545,6 +617,7 @@ function PdfPage({
   const [drag, setDrag] = useState<Drag | null>(null);
   const [boxDraft, setBoxDraft] = useState<number[] | null>(null); // text box being dragged out
   const erasing = useRef(false);
+  const pan = useRef<{ id: number; x: number; y: number } | null>(null); // a finger scrolling (pencil-only mode)
   // Lasso: the loop being drawn, the selected strokes/items (by identity, so an
   // undo that swaps them out simply empties the selection), and a pending move.
   const [lasso, setLasso] = useState<number[] | null>(null);
@@ -632,6 +705,15 @@ function PdfPage({
   }
 
   function onPointerDown(e: React.PointerEvent<SVGSVGElement>) {
+    if (e.pointerType === "pen") notePencil();
+    else if (e.pointerType === "touch" && pencilOnly()) {
+      // Apple Pencil draws; a finger scrolls (two fingers still pinch-zoom).
+      if (!pan.current) {
+        svgRef.current!.setPointerCapture(e.pointerId);
+        pan.current = { id: e.pointerId, x: e.clientX, y: e.clientY };
+      }
+      return;
+    }
     const pt = toPt(e);
     if (tool === "lasso") {
       svgRef.current!.setPointerCapture(e.pointerId);
@@ -658,6 +740,13 @@ function PdfPage({
     }
   }
   function onPointerMove(e: React.PointerEvent<SVGSVGElement>) {
+    if (pan.current) {
+      if (e.pointerId !== pan.current.id) return;
+      scroller.current?.scrollBy(pan.current.x - e.clientX, pan.current.y - e.clientY);
+      pan.current = { id: e.pointerId, x: e.clientX, y: e.clientY };
+      return;
+    }
+    if (e.pointerType === "touch" && pencilOnly()) return; // a second finger while drawing
     if (boxDraft) {
       const [x, y] = toPt(e);
       setBoxDraft([boxDraft[0], boxDraft[1], x, y]);
@@ -673,7 +762,11 @@ function PdfPage({
       eraseAt(toPt(e));
     }
   }
-  function onPointerUp() {
+  function onPointerUp(e?: React.PointerEvent<SVGSVGElement>) {
+    if (pan.current) {
+      if (!e || e.pointerId === pan.current.id) pan.current = null;
+      return;
+    }
     erasing.current = false;
     if (boxDraft) {
       const [x0, y0, x1, y1] = boxDraft;
@@ -1243,6 +1336,117 @@ async function downscale(file: Blob): Promise<{ src: string; w: number; h: numbe
 }
 
 type Box = { x: number; y: number; w: number; h: number };
+
+// ── Sync ops (mirrors apply_ops in app/routers/notes.py) ──
+type Kind = "strokes" | "items";
+type Op =
+  | { op: "put"; slot: string; kind: Kind; el: Stroke | Item }
+  | { op: "del"; slot: string; kind: Kind; id: string }
+  | { op: "layout"; layout: string[] };
+
+const newId = () => Math.random().toString(36).slice(2, 12);
+
+// ── Apple Pencil vs finger ──
+// Browsers report pointerType "pen" for an Apple Pencil and "touch" for a finger.
+// Once this device has seen a pencil, fingers stop drawing and scroll instead
+// (like GoodNotes). Devices that never had one (phones, mouse) are unaffected.
+const PENCIL_KEY = "openstudy.pencilSeen";
+let pencilSeen = (() => {
+  try {
+    return localStorage.getItem(PENCIL_KEY) === "1";
+  } catch {
+    return false;
+  }
+})();
+function notePencil() {
+  if (pencilSeen) return;
+  pencilSeen = true;
+  try {
+    localStorage.setItem(PENCIL_KEY, "1");
+  } catch {
+    /* private mode: remembered for this visit only */
+  }
+}
+const pencilOnly = () => pencilSeen;
+
+/** New strokes/items get an id: their identity for syncing. */
+function withIds(n: Notes): Notes {
+  let changed = false;
+  const fix = <T extends { id?: string }>(xs?: T[]) => {
+    if (!xs?.some((x) => !x.id)) return xs;
+    changed = true;
+    return xs.map((x) => (x.id ? x : { ...x, id: newId() }));
+  };
+  const pages: Notes["pages"] = {};
+  for (const [slot, p] of Object.entries(n.pages)) {
+    const strokes = fix(p.strokes);
+    const items = fix(p.items);
+    pages[slot] = strokes === p.strokes && items === p.items ? p : { ...p, strokes, items };
+  }
+  return changed ? { ...n, pages } : n;
+}
+
+/** The ops that turn `a` into `b`: elements compared by id, changed = a new object. */
+function diffNotes(a: Notes, b: Notes, defaultLayout: string[]): Op[] {
+  const ops: Op[] = [];
+  if (a.layout !== b.layout) ops.push({ op: "layout", layout: b.layout ?? defaultLayout });
+  for (const slot of new Set([...Object.keys(a.pages), ...Object.keys(b.pages)])) {
+    const pa = a.pages[slot] ?? {};
+    const pb = b.pages[slot] ?? {};
+    if (pa === pb) continue;
+    for (const kind of ["strokes", "items"] as const) {
+      const xa: (Stroke | Item)[] = pa[kind] ?? [];
+      const xb: (Stroke | Item)[] = pb[kind] ?? [];
+      if (xa === xb) continue;
+      const before = new Map(xa.map((x) => [x.id, x]));
+      const after = new Set(xb.map((x) => x.id));
+      for (const x of xb) if (before.get(x.id) !== x) ops.push({ op: "put", slot, kind, el: x });
+      for (const x of xa) if (!after.has(x.id)) ops.push({ op: "del", slot, kind, id: x.id! });
+    }
+  }
+  return ops;
+}
+
+function applyOps(n: Notes, ops: Op[]): Notes {
+  const out: Notes = { ...n, pages: { ...n.pages } };
+  for (const op of ops) {
+    if (op.op === "layout") {
+      out.layout = op.layout;
+      continue;
+    }
+    const page = { ...(out.pages[op.slot] ?? {}) };
+    const arr: (Stroke | Item)[] = [...(page[op.kind] ?? [])];
+    const id = op.op === "put" ? op.el.id : op.id;
+    const at = arr.findIndex((x) => x.id === id);
+    if (op.op === "del") {
+      if (at >= 0) arr.splice(at, 1);
+    } else if (at < 0) arr.push(op.el);
+    else arr[at] = op.el;
+    if (op.kind === "strokes") page.strokes = arr as Stroke[];
+    else page.items = arr as Item[];
+    out.pages[op.slot] = page;
+  }
+  return out;
+}
+
+/** Keep the old object for every unchanged element, so selections (held by identity) survive a sync. */
+function reuseUnchanged(next: Notes, prev: Notes | null): Notes {
+  if (!prev) return next;
+  const keep = <T extends { id?: string }>(xs?: T[], old?: T[]) => {
+    if (!xs || !old) return xs;
+    const byId = new Map(old.map((o) => [o.id, o]));
+    return xs.map((x) => {
+      const o = byId.get(x.id);
+      return o && JSON.stringify(o) === JSON.stringify(x) ? o : x;
+    });
+  };
+  const pages: Notes["pages"] = {};
+  for (const [slot, p] of Object.entries(next.pages)) {
+    const q = prev.pages[slot];
+    pages[slot] = { ...p, strokes: keep(p.strokes, q?.strokes), items: keep(p.items, q?.items) };
+  }
+  return { ...next, pages };
+}
 
 function saveBlob(blob: Blob, name: string) {
   const url = URL.createObjectURL(blob);
