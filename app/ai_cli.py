@@ -51,8 +51,9 @@ def search_path() -> str:
     if sys.platform == "win32":
         appdata = Path(os.environ.get("APPDATA", home / "AppData/Roaming"))
         local = Path(os.environ.get("LOCALAPPDATA", home / "AppData/Local"))
-        extra += [appdata / "npm", local / "Programs/antigravity/bin", local / "antigravity/bin",
-                  home / ".antigravity/bin"]
+        # agy's Windows installer (irm https://antigravity.google/cli/install.ps1 | iex) puts it in
+        # %LOCALAPPDATA%/agy/bin. Not Antigravity's desktop-app folders: those only hold the IDE.
+        extra += [appdata / "npm", local / "agy/bin"]
     return os.pathsep.join([os.environ.get("PATH", ""), *map(str, extra)])
 
 
