@@ -97,3 +97,18 @@ def test_bridge_logs_to_a_file_when_there_is_no_console(tmp_path, monkeypatch):
     ai_bridge.sys.stderr.close()
     log = (tmp_path / "ai_bridge.log").read_text(encoding="utf-8")
     assert "ai bridge on" in log and "request line" in log
+
+
+def test_agy_is_told_to_answer_without_tools(monkeypatch):
+    seen = {}
+
+    def fake_subprocess_run(argv, **kw):
+        seen["argv"] = argv
+        return subprocess.CompletedProcess(argv, 0, stdout="ok", stderr="")
+    monkeypatch.setattr(ai_cli.shutil, "which", lambda *a, **k: "/usr/bin/agy")
+    monkeypatch.setattr(ai_cli.subprocess, "run", fake_subprocess_run)
+    ai_cli.run("gemini", "Question: what is a DFA?")
+    prompt_arg = next(a for a in seen["argv"] if a.startswith("-p="))
+    assert prompt_arg.startswith("-p=Answer directly from the text below. Do not use any tools")
+    assert prompt_arg.endswith("Question: what is a DFA?")
+    assert "--mode" in seen["argv"] and "plan" in seen["argv"]  # read-only plan mode stays on

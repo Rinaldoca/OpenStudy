@@ -34,6 +34,14 @@ LOGIN_HINT = {
 }
 TIMEOUT_S = 300
 
+# agy is an agent even in plan mode: in an empty folder it tends to reach for a
+# shell command first, headless mode denies it, and it ends with no answer. The
+# prompt already holds everything it needs, so tell it so. (claude runs with
+# --tools "" and needs no such note.)
+NO_TOOLS_NOTE = {
+    "gemini": "Answer directly from the text below. Do not use any tools, run any commands or read any files.\n\n",
+}
+
 # Windows caps a whole command line at 32,767 characters; macOS/Linux allow ~1 MB.
 # Prompts passed as an argument (agy) are cut to fit, keeping the question at the end.
 _MAX_ARG_PROMPT = 24_000 if sys.platform == "win32" else 500_000
@@ -79,6 +87,7 @@ def run(provider: str, prompt: str) -> subprocess.CompletedProcess:
     exe = shutil.which(binary, path=path)
     if not exe:
         raise CliMissing(f"{binary} isn't installed — {LOGIN_HINT[provider]}")
+    prompt = NO_TOOLS_NOTE.get(provider, "") + prompt
     as_arg = "-p={prompt}" in args
     if as_arg and Path(exe).suffix.lower() in (".bat", ".cmd"):
         # cmd.exe re-parses a batch file's arguments: quotes, %, & and | in the
