@@ -25,7 +25,7 @@ export function AiSettingsCard() {
   const { data, isPending } = useAiProviders();
   const [provider, setProvider] = useDefaultProvider();
   if (isPending) return <Loader2 className="h-4 w-4 animate-spin text-muted" />;
-  if (!data?.local_mode) return <p className="text-sm text-muted">{t("ai.needsLocalMode")}</p>;
+  if (!(data?.ai_enabled ?? data?.local_mode)) return <p className="text-sm text-muted">{t("ai.needsLocalMode")}</p>;
   const active = provider ?? data.providers.find((p) => p.installed)?.id;
   return (
     <div className="flex flex-col gap-2">
@@ -63,7 +63,7 @@ export function AskAi() {
   const providers = useAiProviders();
   const [savedProvider, setSavedProvider] = useDefaultProvider();
   const installed = (providers.data?.providers ?? []).filter((p) => p.installed);
-  const enabled = Boolean(providers.data?.local_mode && installed.length);
+  const enabled = Boolean((providers.data?.ai_enabled ?? providers.data?.local_mode) && installed.length);
   const provider = installed.some((p) => p.id === savedProvider) ? savedProvider! : installed[0]?.id;
 
   const [open, setOpen] = useState(false);

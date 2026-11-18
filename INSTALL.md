@@ -387,6 +387,26 @@ Log in with the same email and password as on the Mac.
 
 Edits to shared files (delete, rename, upload) affect both of you.
 
+### Ask AI and the quiz on the home server
+
+They run the AI command-line tools you're logged into **on the server's host**
+(not in the container) through `scripts/ai_bridge.py`, a small standard-library
+Python service:
+
+1. On the host, install and sign in to the CLIs you want: `claude` (Claude Code;
+   for an always-on box use `claude setup-token` and set `CLAUDE_CODE_OAUTH_TOKEN`
+   for your user) and/or `agy` (Antigravity — keeps its Google login in the OS
+   keyring, which is why it can't run inside Docker).
+2. In `.env`: `AI_BRIDGE_URL=http://host.docker.internal:8765`, a random
+   `AI_BRIDGE_SECRET`, and `AI_USERS=operator` (or `all`).
+3. Run the bridge as your user, at logon: `python scripts/ai_bridge.py --env-file .env`.
+   It listens on 127.0.0.1:8765 only.
+4. `./deploy.sh --skip-build` so the backend picks up the env.
+
+The *Link folder* picker stays LOCAL_MODE-only (it opens a dialog on the host's screen).
+To get files from your laptop onto the server, use **Upload folder** in Files or
+drag files and folders onto the file list.
+
 ### 7. iPad
 
 Open the URL in **Safari** → Share → **Add to Home Screen**; it launches

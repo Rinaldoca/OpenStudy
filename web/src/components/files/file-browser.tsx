@@ -5,6 +5,7 @@ import {
   FileText,
   Folder,
   FolderPlus,
+  FolderUp,
   Image as ImageIcon,
   Loader2,
   MoreHorizontal,
@@ -39,6 +40,7 @@ import {
   DropdownTrigger,
 } from "@/components/ui/dropdown";
 import { FileViewer } from "./file-viewer";
+import { eachLimited, fromDrop, fromInput, type PickedFile } from "@/lib/upload-tree";
 
 export function FileBrowser({
   rootPrefix = "",
@@ -52,6 +54,9 @@ export function FileBrowser({
   const [prefix, setPrefix] = useState(rootPrefix);
   const [openPath, setOpenPath] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const folderInputRef = useRef<HTMLInputElement | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
   const upload = useUploadFile();
   const createFolder = useCreateFolder();
   const deleteEntry = useDeleteEntry();
@@ -65,20 +70,63 @@ export function FileBrowser({
   // the filesystem's flat-file model (no true directory entries until a file exists).
   const visible = (data ?? []).filter((e) => e.name !== ".keep");
 
-  async function onUpload(e: React.ChangeEvent<HTMLInputElement>) {
-    const files = Array.from(e.target.files ?? []);
-    e.target.value = "";
-    if (files.length === 0) return;
-    for (const file of files) {
-      const path = prefix ? `${prefix}/${file.name}` : file.name;
+  async function uploadPicked(picked: PickedFile[]) {
+    if (picked.length === 0) return;
+    if (picked.length === 1) {
+      const { file, rel } = picked[0];
+      const path = prefix ? `${prefix}/${rel}` : rel;
       try {
         await upload.mutateAsync({ file, path });
-        toast.success(t("files.uploadedName", { name: file.name }));
+        toast.success(t("files.uploadedName", { name: rel }));
       } catch (err) {
-        toast.error(
-          t("files.uploadFailed", { name: file.name, msg: (err as Error).message || "—" })
-        );
+        toast.error(t("files.uploadFailed", { name: rel, msg: (err as Error).message || "—" }));
       }
+      return;
+    }
+    setUploading(true);
+    const id = toast.loading(t("files.uploadingMany", { done: 0, total: picked.length }));
+    let done = 0;
+    const failed: string[] = [];
+    // A few at a time: fast for folders of small files, gentle on the server.
+    await eachLimited(picked, 3, async ({ file, rel }) => {
+      const path = prefix ? `${prefix}/${rel}` : rel;
+      try {
+        await upload.mutateAsync({ file, path });
+      } catch {
+        failed.push(rel);
+      }
+      done += 1;
+      toast.loading(t("files.uploadingMany", { done, total: picked.length }), { id });
+    });
+    setUploading(false);
+    if (failed.length === 0) {
+      toast.success(t("files.uploadedMany", { count: picked.length }), { id });
+    } else {
+      toast.error(
+        t("files.uploadedSomeFailed", {
+          ok: picked.length - failed.length,
+          total: picked.length,
+          names: failed.slice(0, 3).join(", ") + (failed.length > 3 ? ", …" : ""),
+        }),
+        { id }
+      );
+    }
+  }
+
+  async function onUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const picked = fromInput(e.target.files);
+    e.target.value = "";
+    await uploadPicked(picked);
+  }
+
+  async function onDrop(e: React.DragEvent) {
+    e.preventDefault();
+    setDragOver(false);
+    if (uploading) return;
+    try {
+      await uploadPicked(await fromDrop(e.dataTransfer));
+    } catch (err) {
+      toast.error(t("files.uploadFailed", { name: "—", msg: (err as Error).message || "—" }));
     }
   }
 
@@ -250,7 +298,7 @@ export function FileBrowser({
           <button
             type="button"
             onClick={() => fileInputRef.current?.click()}
-            disabled={upload.isPending}
+            disabled={uploading || upload.isPending}
             className="touch-target inline-flex items-center gap-2 rounded-md border border-border/60 bg-surface-2 hover:bg-surface-2/80 px-3 text-sm font-medium disabled:opacity-50 transition-colors"
           >
             {upload.isPending ? (
@@ -260,7 +308,27 @@ export function FileBrowser({
             )}
             {t("files.upload")}
           </button>
+          <button
+            type="button"
+            onClick={() => folderInputRef.current?.click()}
+            disabled={uploading || upload.isPending}
+            title={t("files.uploadFolderHint")}
+            className="touch-target inline-flex items-center gap-2 rounded-md border border-border/60 bg-surface-2 hover:bg-surface-2/80 px-3 text-sm font-medium disabled:opacity-50 transition-colors"
+          >
+            <FolderUp className="h-4 w-4" />
+            {t("files.uploadFolder")}
+          </button>
         </div>
+        <input
+          ref={(el) => {
+            folderInputRef.current = el;
+            // Not in React's typings; makes the picker choose a whole folder.
+            el?.setAttribute("webkitdirectory", "");
+          }}
+          type="file"
+          onChange={onUpload}
+          className="hidden"
+        />
         <input
           ref={fileInputRef}
           type="file"
@@ -270,8 +338,19 @@ export function FileBrowser({
         />
       </div>
 
-      {/* Entries (or search results) */}
-      <div className="card overflow-hidden">
+      {/* Entries (or search results). Drop files or folders here to upload. */}
+      <div
+        className={cn("card overflow-hidden transition-shadow", dragOver && "ring-2 ring-info/60")}
+        onDragOver={(e) => {
+          if (!e.dataTransfer.types.includes("Files")) return;
+          e.preventDefault();
+          setDragOver(true);
+        }}
+        onDragLeave={(e) => {
+          if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOver(false);
+        }}
+        onDrop={onDrop}
+      >
         {inSearchMode ? (
           search.isPending ? (
             <div className="py-12 flex justify-center">

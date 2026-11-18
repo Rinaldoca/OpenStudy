@@ -1,8 +1,14 @@
 """Ask your own AI (Claude / Gemini / ChatGPT) about course material.
 
-LOCAL_MODE only: the backend runs on the user's Mac and shells out to the
-AI CLIs they're already logged into (`claude`, Antigravity's `agy`, `codex`), so
-answers come from their personal subscriptions — no API keys here.
+Answers come from the AI command-line tools the host owner is logged into
+(`claude`, Antigravity's `agy`, `codex`), so they run on personal
+subscriptions — no API keys here. Two ways to reach them:
+
+- LOCAL_MODE: the backend runs on the user's own computer and runs the CLIs itself.
+- AI_BRIDGE_URL: the backend runs in Docker on a home server and calls
+  scripts/ai_bridge.py on the host, which runs them (see INSTALL.md).
+
+Who may use it: storage.ai_access (operator only, or everyone with AI_USERS=all).
 
   GET  /api/ai/providers   which CLIs are installed
   POST /api/ai/ask         {provider, question, selection?, path?, page?, history?}
@@ -15,15 +21,14 @@ from __future__ import annotations
 
 import asyncio
 import os
-import shutil
 import subprocess
-import tempfile
-from pathlib import Path
 from typing import Literal, Optional
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from .. import ai_cli
 from ..auth import require_user, User
 from ..intents import files as files_intent
 from ..schemas import EventCreate
@@ -33,46 +38,45 @@ from ..services import storage as storage_svc
 router = APIRouter(prefix="/ai", tags=["ai"], dependencies=[Depends(require_user)])
 
 Provider = Literal["claude", "gemini", "chatgpt"]
-
-# provider → (binary, args). The prompt goes in on stdin, or replaces "{prompt}"
-# for CLIs that only take it as an argument (prompts stay far below macOS's 1 MB ARG_MAX).
-_COMMANDS: dict[str, tuple[str, list[str]]] = {
-    # --safe-mode: skip the user's plugins/hooks/CLAUDE.md (they leak into answers); keeps their login.
-    "claude": ("claude", ["-p", "--safe-mode", "--tools", "","--no-session-persistence", "--strict-mcp-config"]),
-    # Antigravity CLI (replaced the old `gemini` CLI). Plan mode = read-only.
-    "gemini": ("agy", ["--mode", "plan", "--print-timeout", "280s", "-p={prompt}"]),
-    # ponytail: codex flags from its docs, not run here (codex wasn't installed when written).
-    "chatgpt": ("codex", ["exec", "--sandbox", "read-only", "--skip-git-repo-check", "--color", "never", "-"]),
-}
-_LOGIN_HINT = {
-    "claude": "run `claude` in Terminal once and log in",
-    "gemini": "install Antigravity, then run `agy` in Terminal once and sign in with Google",
-    "chatgpt": "install with `npm i -g @openai/codex`, then run `codex` once and sign in with ChatGPT",
-}
 _MAX_CONTEXT_CHARS = 40_000  # ~10k tokens; bigger files need a page number
 
 
-def _search_path() -> str:
-    # The server may start with a minimal PATH; add where npm/brew put CLIs.
-    home = Path.home()
-    extra = [home / ".npm-global/bin", home / ".local/bin", home / ".volta/bin", Path("/opt/homebrew/bin"), Path("/usr/local/bin")]
-    return os.pathsep.join([os.environ.get("PATH", ""), *map(str, extra)])
+def _require_ai(user: User) -> None:
+    if not storage_svc.ai_access(user.id):
+        raise HTTPException(403, "Ask AI isn't enabled for this account: it runs on the host owner's AI subscriptions")
 
 
-def _require_local(user: User) -> None:
-    if not storage_svc.machine_access(user.id):
-        raise HTTPException(403, "AI is only available to this Mac's owner (LOCAL_MODE=true): it runs on their own AI subscriptions")
+def _bridge_headers() -> dict[str, str]:
+    return {"Authorization": f"Bearer {os.environ.get('AI_BRIDGE_SECRET', '').strip()}"}
+
+
+async def _installed() -> dict[str, bool]:
+    url = storage_svc.ai_bridge_url()
+    if storage_svc.local_mode() or not url:
+        return ai_cli.installed()
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.get(f"{url}/providers", headers=_bridge_headers())
+        r.raise_for_status()
+        return {pid: bool(r.json()["installed"].get(pid)) for pid in ai_cli.COMMANDS}
+    except (httpx.HTTPError, KeyError, ValueError):
+        return {pid: False for pid in ai_cli.COMMANDS}  # bridge down: UI shows "not installed"
 
 
 @router.get("/providers")
 async def providers(user: User = Depends(require_user)) -> dict:
-    path = _search_path()
+    enabled = storage_svc.ai_access(user.id)
+    installed = await _installed() if enabled else {pid: False for pid in ai_cli.COMMANDS}
+    bridge = bool(storage_svc.ai_bridge_url()) and not storage_svc.local_mode()
     return {
-        # False for friends' accounts: the UI then hides Ask AI and the quiz.
-        "local_mode": storage_svc.machine_access(user.id),
+        # False for accounts without AI access: the UI then hides Ask AI and the quiz.
+        "ai_enabled": enabled,
+        # Kept for older frontends; same meaning as ai_enabled.
+        "local_mode": enabled,
         "providers": [
-            {"id": pid, "installed": shutil.which(binary, path=path) is not None, "hint": _LOGIN_HINT[pid]}
-            for pid, (binary, _) in _COMMANDS.items()
+            {"id": pid, "installed": installed[pid],
+             "hint": ai_cli.LOGIN_HINT[pid] + (" on the server PC" if bridge else "")}
+            for pid in ai_cli.COMMANDS
         ],
     }
 
@@ -132,44 +136,56 @@ def _prompt(body: AskBody, material: Optional[str]) -> str:
     return "\n\n".join(parts)
 
 
-def _run(provider: str, prompt: str) -> subprocess.CompletedProcess:
-    binary, args = _COMMANDS[provider]
-    path = _search_path()
-    exe = shutil.which(binary, path=path)
-    if not exe:
-        raise HTTPException(400, f"{binary} isn't installed — {_LOGIN_HINT[provider]}")
-    as_arg = "-p={prompt}" in args
-    argv = [exe, *(a.replace("{prompt}", prompt) for a in args)]
-    # Empty cwd: the CLI sees nothing but the prompt.
-    with tempfile.TemporaryDirectory(prefix="openstudy-ai-") as cwd:
-        return subprocess.run(
-            argv, input=None if as_arg else prompt, stdin=subprocess.DEVNULL if as_arg else None,
-            capture_output=True, text=True,
-            cwd=cwd, env={**os.environ, "PATH": path}, timeout=300,
-        )
+async def _run_bridge(url: str, provider: str, prompt: str) -> tuple[int, str, str]:
+    try:
+        async with httpx.AsyncClient(timeout=ai_cli.TIMEOUT_S + 30) as client:
+            r = await client.post(f"{url}/run", json={"provider": provider, "prompt": prompt},
+                                  headers=_bridge_headers())
+    except httpx.TimeoutException as exc:
+        raise HTTPException(504, "the AI took longer than 5 minutes") from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(502, "the AI bridge on the server PC isn't answering — is scripts/ai_bridge.py running?") from exc
+    if r.status_code == 504:
+        raise HTTPException(504, "the AI took longer than 5 minutes")
+    data = r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
+    if r.status_code != 200:
+        raise HTTPException(400 if data.get("error") == "missing" else 502,
+                            data.get("message") or f"AI bridge error: {data.get('error') or r.status_code}")
+    return int(data.get("returncode", 1)), data.get("stdout") or "", data.get("stderr") or ""
+
+
+async def _run_local(provider: str, prompt: str) -> tuple[int, str, str]:
+    try:
+        proc = await asyncio.to_thread(ai_cli.run, provider, prompt)
+    except ai_cli.CliMissing as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except subprocess.TimeoutExpired as exc:
+        raise HTTPException(504, "the AI took longer than 5 minutes") from exc
+    return proc.returncode, proc.stdout, proc.stderr
 
 
 async def run_ai(provider: str, prompt: str, user: User) -> str:
     """Run `prompt` through the provider's CLI and return its answer (HTTP errors on failure)."""
-    _require_local(user)
-    try:
-        proc = await asyncio.to_thread(_run, provider, prompt)
-    except subprocess.TimeoutExpired as exc:
-        raise HTTPException(504, "the AI took longer than 5 minutes") from exc
-    answer = proc.stdout.strip()
-    if proc.returncode != 0 or not answer:
-        lines = (proc.stderr or proc.stdout).strip().splitlines()
+    _require_ai(user)
+    url = storage_svc.ai_bridge_url()
+    if url and not storage_svc.local_mode():
+        code, stdout, stderr = await _run_bridge(url, provider, prompt)
+    else:
+        code, stdout, stderr = await _run_local(provider, prompt)
+    answer = stdout.strip()
+    if code != 0 or not answer:
+        lines = (stderr or stdout).strip().splitlines()
         # Drop CLI warnings and agy's raw JSON echo of the same error.
         err = [ln for ln in lines if not ln.lower().startswith(("warning", "agy_error"))][-3:] or lines[-3:]
         needs_login = any(w in " ".join(err).lower() for w in ("auth", "login", "log in", "sign in"))
-        hint = f" — {_LOGIN_HINT[provider]}" if needs_login else ""
+        hint = f" — {ai_cli.LOGIN_HINT[provider]}" if needs_login else ""
         raise HTTPException(502, f"{provider} failed: {' / '.join(err) or 'no output'}{hint}")
     return answer
 
 
 @router.post("/ask")
 async def ask(body: AskBody, user: User = Depends(require_user)) -> dict:
-    _require_local(user)
+    _require_ai(user)
     material = await _material(user, body.path, body.page) if body.path else None
     answer = await run_ai(body.provider, _prompt(body, material), user)
     # Logged so the daily quiz knows what you asked about (question only, not the answer).

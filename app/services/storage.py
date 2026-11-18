@@ -65,6 +65,28 @@ def machine_access(user_id: UUID) -> bool:
     return local_mode() and str(user_id) == get_settings().operator_user_id
 
 
+def ai_bridge_url() -> str:
+    """AI_BRIDGE_URL: where scripts/ai_bridge.py listens on the host, when the
+    backend runs in Docker on a home server. Empty = no bridge."""
+    return os.environ.get("AI_BRIDGE_URL", "").strip().rstrip("/")
+
+
+def ai_access(user_id: UUID) -> bool:
+    """Ask AI and the quiz run on the host owner's AI subscriptions.
+
+    LOCAL_MODE: the operator only (the CLIs run on their own computer).
+    Through the host bridge: the operator, or every account with AI_USERS=all."""
+    from ..config import get_settings
+
+    if machine_access(user_id):
+        return True
+    if not ai_bridge_url():
+        return False
+    if os.environ.get("AI_USERS", "operator").strip().lower() == "all":
+        return True
+    return str(user_id) == get_settings().operator_user_id
+
+
 def linked_folder(user_id: UUID, folder: str) -> Path | None:
     """Target of a linked course folder (a top-level symlink in the user's
     root), or None if `folder` isn't linked."""

@@ -82,7 +82,7 @@ export default function QuizPage() {
   let body: React.ReactNode;
   if (providers.isPending) {
     body = <Loader2 className="h-5 w-5 animate-spin text-muted mx-auto" />;
-  } else if (!providers.data?.local_mode || !provider) {
+  } else if (!(providers.data?.ai_enabled ?? providers.data?.local_mode) || !provider) {
     body = <p className="card p-5 text-sm text-muted">{t("quiz.unavailable")}</p>;
   } else if (!quiz) {
     body = (

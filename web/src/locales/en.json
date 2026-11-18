@@ -212,6 +212,11 @@
     "renamedTo": "Renamed to {{name}}",
     "deletedName": "Deleted {{name}}",
     "uploadedName": "Uploaded {{name}}",
+    "uploadFolder": "Upload folder",
+    "uploadFolderHint": "Upload a whole folder from this computer, or drag files and folders onto the list",
+    "uploadingMany": "Uploading {{done}} / {{total}}…",
+    "uploadedMany": "Uploaded {{count}} files",
+    "uploadedSomeFailed": "Uploaded {{ok}} of {{total}} — failed: {{names}}",
     "uploadFailed": "Upload failed: {{name}} — {{msg}}",
     "folderFailed": "Failed to create folder — {{msg}}",
     "renameFailed": "Rename failed — {{msg}}",
@@ -810,7 +815,7 @@
     "settingsBody": "Ask questions about selected text or an open file using the AI apps you're already logged into on this Mac. Pick your default:",
     "installed": "Installed — uses your own account",
     "notInstalled": "Not set up — {{hint}}",
-    "needsLocalMode": "Available when OpenStudy runs on your own computer (LOCAL_MODE=true in .env)."
+    "needsLocalMode": "Not enabled for this account. Ask AI runs on the AI subscriptions of the computer hosting OpenStudy (LOCAL_MODE=true, or the AI bridge on a home server)."
   },
   "quiz": {
     "title": "Quiz",

@@ -11,6 +11,7 @@ export const PROVIDER_LABELS: Record<ProviderId, string> = {
   chatgpt: "ChatGPT",
 };
 type ProvidersResponse = {
+  ai_enabled?: boolean;
   local_mode: boolean;
   providers: { id: ProviderId; installed: boolean; hint: string }[];
 };

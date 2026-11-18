@@ -212,6 +212,11 @@
     "renamedTo": "Umbenannt zu {{name}}",
     "deletedName": "{{name}} gelöscht",
     "uploadedName": "{{name}} hochgeladen",
+    "uploadFolder": "Ordner hochladen",
+    "uploadFolderHint": "Einen ganzen Ordner von diesem Computer hochladen oder Dateien und Ordner auf die Liste ziehen",
+    "uploadingMany": "Lade hoch {{done}} / {{total}}…",
+    "uploadedMany": "{{count}} Dateien hochgeladen",
+    "uploadedSomeFailed": "{{ok}} von {{total}} hochgeladen — fehlgeschlagen: {{names}}",
     "uploadFailed": "Upload fehlgeschlagen: {{name}} — {{msg}}",
     "folderFailed": "Ordner konnte nicht angelegt werden — {{msg}}",
     "renameFailed": "Umbenennen fehlgeschlagen — {{msg}}",
@@ -810,7 +815,7 @@
     "settingsBody": "Stelle Fragen zu markiertem Text oder einer geöffneten Datei – mit den KI-Apps, in die du auf diesem Mac schon eingeloggt bist. Wähle deinen Standard:",
     "installed": "Installiert — nutzt dein eigenes Konto",
     "notInstalled": "Nicht eingerichtet — {{hint}}",
-    "needsLocalMode": "Verfügbar, wenn OpenStudy auf deinem eigenen Computer läuft (LOCAL_MODE=true in .env)."
+    "needsLocalMode": "Für dieses Konto nicht aktiviert. Ask AI läuft über die KI-Abos des Computers, auf dem OpenStudy läuft (LOCAL_MODE=true oder die AI-Bridge auf einem Heimserver)."
   },
   "quiz": {
     "title": "Quiz",

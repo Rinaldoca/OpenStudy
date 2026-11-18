@@ -472,3 +472,25 @@ def test_machine_access_is_operator_only(monkeypatch):
     assert not storage.machine_access(uuid4())  # a friend's account
     monkeypatch.setenv("LOCAL_MODE", "false")
     assert not storage.machine_access(SENTINEL_USER_ID)
+
+
+def test_ai_access_local_mode_bridge_and_ai_users(monkeypatch):
+    from uuid import uuid4
+    from app.services import storage
+
+    friend = uuid4()
+    for var in ("LOCAL_MODE", "AI_BRIDGE_URL", "AI_USERS"):
+        monkeypatch.delenv(var, raising=False)
+    assert not storage.ai_access(SENTINEL_USER_ID)  # neither LOCAL_MODE nor a bridge
+
+    monkeypatch.setenv("LOCAL_MODE", "true")
+    assert storage.ai_access(SENTINEL_USER_ID) and not storage.ai_access(friend)
+
+    monkeypatch.setenv("LOCAL_MODE", "false")
+    monkeypatch.setenv("AI_BRIDGE_URL", "http://host.docker.internal:8765/")
+    assert storage.ai_bridge_url() == "http://host.docker.internal:8765"
+    assert storage.ai_access(SENTINEL_USER_ID) and not storage.ai_access(friend)
+    monkeypatch.setenv("AI_USERS", "all")
+    assert storage.ai_access(friend)
+    # The folder picker never follows: it opens a dialog on the host's screen.
+    assert not storage.machine_access(SENTINEL_USER_ID)
