@@ -22,6 +22,8 @@ Endpoints (all need `Authorization: Bearer <AI_BRIDGE_SECRET>`):
   POST /run        {"provider", "prompt"} → {"returncode", "stdout", "stderr"}
 
 Listens on 127.0.0.1 only; Docker Desktop forwards host.docker.internal there.
+Without a console (pythonw.exe, a logon task) it logs to ai_bridge.log next to
+the --env-file, or to --log-file.
 """
 from __future__ import annotations
 
@@ -113,7 +115,14 @@ def main() -> int:
     ap.add_argument("--env-file", type=Path, help="read AI_BRIDGE_SECRET from this .env")
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=8765)
+    ap.add_argument("--log-file", type=Path, help="default: stderr, or ai_bridge.log beside --env-file without a console")
     args = ap.parse_args()
+    log_file = args.log_file or (
+        (args.env_file.resolve().parent / "ai_bridge.log") if sys.stderr is None and args.env_file else None)
+    if log_file:
+        sys.stderr = open(log_file, "a", encoding="utf-8", buffering=1)  # line-buffered
+    elif sys.stderr is None:  # pythonw with nowhere to log: drop log lines rather than crash
+        sys.stderr = open(os.devnull, "w")
     SECRET = os.environ.get("AI_BRIDGE_SECRET", "") or (
         _secret_from_env_file(args.env_file) if args.env_file else "")
     if len(SECRET) < 24:

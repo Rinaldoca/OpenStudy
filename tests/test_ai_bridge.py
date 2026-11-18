@@ -75,3 +75,25 @@ def test_batch_file_wrappers_never_get_the_prompt_as_an_argument(monkeypatch):
     monkeypatch.setattr(ai_cli.shutil, "which", lambda *a, **k: r"C:\tools\agy.cmd")
     with pytest.raises(ai_cli.CliMissing):
         ai_cli.run("gemini", "a & del *")
+
+
+def test_bridge_logs_to_a_file_when_there_is_no_console(tmp_path, monkeypatch):
+    # pythonw.exe (a Windows logon task) has sys.stderr = None; logging a request used to crash it.
+    env = tmp_path / ".env"
+    env.write_text("AI_BRIDGE_SECRET=" + SECRET + "\n", encoding="utf-8")
+    monkeypatch.setattr(ai_bridge.sys, "stderr", None)
+    monkeypatch.setattr(ai_bridge.sys, "argv", ["ai_bridge.py", "--env-file", str(env), "--port", "0"])
+    started = {}
+
+    class FakeServer:
+        def __init__(self, addr, handler):
+            started["addr"] = addr
+
+        def serve_forever(self):
+            ai_bridge.sys.stderr.write("request line\n")
+
+    monkeypatch.setattr(ai_bridge, "ThreadingHTTPServer", FakeServer)
+    assert ai_bridge.main() == 0
+    ai_bridge.sys.stderr.close()
+    log = (tmp_path / "ai_bridge.log").read_text(encoding="utf-8")
+    assert "ai bridge on" in log and "request line" in log

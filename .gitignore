@@ -95,3 +95,6 @@ docs/superpowers/
 # local dev file store
 .dev/
 deploy.log
+
+# scripts/ai_bridge.py log when run without a console
+ai_bridge.log
