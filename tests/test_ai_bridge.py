@@ -48,7 +48,7 @@ def test_bridge_requires_the_secret(bridge):
 def test_bridge_runs_the_cli_and_reports_errors(bridge, monkeypatch):
     seen = {}
 
-    def fake_run(provider, prompt):
+    def fake_run(provider, prompt, model="", images=None):
         seen.update(provider=provider, prompt=prompt)
         return subprocess.CompletedProcess([], 0, stdout="the answer", stderr="")
     monkeypatch.setattr(ai_cli, "run", fake_run)
@@ -57,7 +57,7 @@ def test_bridge_runs_the_cli_and_reports_errors(bridge, monkeypatch):
 
     assert _call(bridge, "/run", {"provider": "rm -rf", "prompt": "x"})[0] == 400
 
-    def missing(provider, prompt):
+    def missing(provider, prompt, model="", images=None):
         raise ai_cli.CliMissing("agy isn't installed")
     monkeypatch.setattr(ai_cli, "run", missing)
     status, data = _call(bridge, "/run", {"provider": "gemini", "prompt": "x"})
@@ -112,3 +112,50 @@ def test_agy_is_told_to_answer_without_tools(monkeypatch):
     assert prompt_arg.startswith("-p=Answer directly from the text below. Do not use any tools")
     assert prompt_arg.endswith("Question: what is a DFA?")
     assert "--mode" in seen["argv"] and "plan" in seen["argv"]  # read-only plan mode stays on
+
+
+def test_images_and_models_reach_each_cli_the_right_way(monkeypatch):
+    import json as _json
+    from pathlib import Path as _Path
+
+    seen = {}
+
+    def fake_subprocess_run(argv, **kw):
+        seen.update(argv=argv, input=kw.get("input"), files=sorted(p.name for p in _Path(kw["cwd"]).iterdir()))
+        if "stream-json" in argv:  # claude with images: answer comes back as stream-json
+            out = '{"type":"system"}\n{"type":"result","result":"Green","is_error":false}\n'
+            return subprocess.CompletedProcess(argv, 0, stdout=out, stderr="")
+        return subprocess.CompletedProcess(argv, 0, stdout="ok", stderr="")
+    monkeypatch.setattr(ai_cli.shutil, "which", lambda b, **k: f"/usr/bin/{b}")
+    monkeypatch.setattr(ai_cli.subprocess, "run", fake_subprocess_run)
+    png = ("image/png", b"\x89PNGfake")
+
+    proc = ai_cli.run("claude", "what colour?", "sonnet", [png])
+    assert proc.stdout == "Green" and proc.returncode == 0
+    assert seen["argv"][1:3] == ["--model", "sonnet"] and "--tools" in seen["argv"]
+    block = _json.loads(seen["input"])["message"]["content"]
+    assert block[0]["type"] == "image" and block[0]["source"]["media_type"] == "image/png"
+    assert block[1] == {"type": "text", "text": "what colour?"} and seen["files"] == []
+
+    ai_cli.run("gemini", "what colour?", "gemini-3.8-flash-high", [png, ("image/jpeg", b"jpg")])
+    argv = seen["argv"]
+    assert seen["files"] == ["image-1.png", "image-2.jpg"]  # saved for view_file
+    settings = _json.loads(argv[argv.index("--settings") + 1])
+    assert settings["permissions"]["allow"] == ["view_file(*)"] and "run_command(*)" in settings["permissions"]["deny"]
+    assert argv[argv.index("--model") + 1] == "gemini-3.8-flash-high" and "plan" in argv
+    assert next(a for a in argv if a.startswith("-p=")).startswith("-p=The user attached 2 image(s)")
+
+    with pytest.raises(ValueError):
+        ai_cli.run("claude", "x", "sonnet; rm -rf /")
+    with pytest.raises(ValueError):
+        ai_cli.run("claude", "x", "", [("image/svg+xml", b"<svg/>")])
+
+
+def test_model_list_parses_agy_models(monkeypatch):
+    monkeypatch.setattr(ai_cli, "_models_cache", {})
+    monkeypatch.setattr(ai_cli.shutil, "which", lambda b, **k: f"/usr/bin/{b}")
+    out = "gemini-3.8-flash-high\tGemini 3.8 Flash (High)\nclaude-sonnet-4-6\tClaude Sonnet 4.6 (Thinking)\nnot a model line!\n"
+    monkeypatch.setattr(ai_cli.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a, 0, stdout=out, stderr=""))
+    assert ai_cli.models("gemini") == [("", "Default"), ("gemini-3.8-flash-high", "Gemini 3.8 Flash (High)"),
+                                        ("claude-sonnet-4-6", "Claude Sonnet 4.6 (Thinking)")]
+    assert ai_cli.models("claude")[0] == ("", "Default")

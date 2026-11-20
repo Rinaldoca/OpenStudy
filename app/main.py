@@ -48,6 +48,7 @@ async def _lifespan(app: FastAPI):
         await db_module.close_pool()
 from .routers import (
     ai as ai_router,
+    ai_chats as ai_chats_router,
     quiz as quiz_router,
     notes as notes_router,
     auth as auth_router,
@@ -151,6 +152,7 @@ def create_app() -> FastAPI:
         settings_router.router,
         internal_router.router,
         ai_router.router,
+        ai_chats_router.router,
         quiz_router.router,
         notes_router.router,
     ]:

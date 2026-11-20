@@ -20,6 +20,7 @@ just the pages around `page` — so a question costs a few thousand tokens.
 from __future__ import annotations
 
 import asyncio
+import base64
 import os
 import subprocess
 from typing import Literal, Optional
@@ -81,6 +82,25 @@ async def providers(user: User = Depends(require_user)) -> dict:
     }
 
 
+@router.get("/models")
+async def models(user: User = Depends(require_user)) -> dict:
+    """{provider: [{id, label}]} for the model picker ("" = the CLI's default)."""
+    _require_ai(user)
+    url = storage_svc.ai_bridge_url()
+    if url and not storage_svc.local_mode():
+        try:
+            async with httpx.AsyncClient(timeout=90) as client:
+                r = await client.get(f"{url}/models", headers=_bridge_headers())
+            r.raise_for_status()
+            raw = r.json()["models"]
+        except (httpx.HTTPError, KeyError, ValueError):
+            raw = {}
+    else:
+        installed = ai_cli.installed()
+        raw = {pid: await asyncio.to_thread(ai_cli.models, pid) for pid in ai_cli.COMMANDS if installed[pid]}
+    return {pid: [{"id": m[0], "label": m[1]} for m in lst] for pid, lst in raw.items()}
+
+
 class Turn(BaseModel):
     question: str = Field(max_length=4000)
     answer: str = Field(max_length=20000)
@@ -136,11 +156,15 @@ def _prompt(body: AskBody, material: Optional[str]) -> str:
     return "\n\n".join(parts)
 
 
-async def _run_bridge(url: str, provider: str, prompt: str) -> tuple[int, str, str]:
+Images = list[tuple[str, bytes]]
+
+
+async def _run_bridge(url: str, provider: str, prompt: str, model: str, images: Images) -> tuple[int, str, str]:
+    payload = {"provider": provider, "prompt": prompt, "model": model,
+               "images": [{"mime": m, "data": base64.b64encode(d).decode()} for m, d in images]}
     try:
         async with httpx.AsyncClient(timeout=ai_cli.TIMEOUT_S + 30) as client:
-            r = await client.post(f"{url}/run", json={"provider": provider, "prompt": prompt},
-                                  headers=_bridge_headers())
+            r = await client.post(f"{url}/run", json=payload, headers=_bridge_headers())
     except httpx.TimeoutException as exc:
         raise HTTPException(504, "the AI took longer than 5 minutes") from exc
     except httpx.HTTPError as exc:
@@ -149,29 +173,30 @@ async def _run_bridge(url: str, provider: str, prompt: str) -> tuple[int, str, s
         raise HTTPException(504, "the AI took longer than 5 minutes")
     data = r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
     if r.status_code != 200:
-        raise HTTPException(400 if data.get("error") == "missing" else 502,
+        raise HTTPException(400 if data.get("error") in ("missing", "invalid") else 502,
                             data.get("message") or f"AI bridge error: {data.get('error') or r.status_code}")
     return int(data.get("returncode", 1)), data.get("stdout") or "", data.get("stderr") or ""
 
 
-async def _run_local(provider: str, prompt: str) -> tuple[int, str, str]:
+async def _run_local(provider: str, prompt: str, model: str, images: Images) -> tuple[int, str, str]:
     try:
-        proc = await asyncio.to_thread(ai_cli.run, provider, prompt)
-    except ai_cli.CliMissing as exc:
+        proc = await asyncio.to_thread(ai_cli.run, provider, prompt, model, images)
+    except (ai_cli.CliMissing, ValueError) as exc:
         raise HTTPException(400, str(exc)) from exc
     except subprocess.TimeoutExpired as exc:
         raise HTTPException(504, "the AI took longer than 5 minutes") from exc
     return proc.returncode, proc.stdout, proc.stderr
 
 
-async def run_ai(provider: str, prompt: str, user: User) -> str:
-    """Run `prompt` through the provider's CLI and return its answer (HTTP errors on failure)."""
+async def run_ai(provider: str, prompt: str, user: User, model: str = "", images: Images | None = None) -> str:
+    """Run `prompt` (+ pasted images) through the provider's CLI and return its
+    answer (HTTP errors on failure). `model` "" = the CLI's default."""
     _require_ai(user)
     url = storage_svc.ai_bridge_url()
     if url and not storage_svc.local_mode():
-        code, stdout, stderr = await _run_bridge(url, provider, prompt)
+        code, stdout, stderr = await _run_bridge(url, provider, prompt, model, images or [])
     else:
-        code, stdout, stderr = await _run_local(provider, prompt)
+        code, stdout, stderr = await _run_local(provider, prompt, model, images or [])
     answer = stdout.strip()
     if code != 0 or not answer:
         lines = (stderr or stdout).strip().splitlines()

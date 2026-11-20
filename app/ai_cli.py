@@ -10,11 +10,15 @@ see the prompt we build.
 """
 from __future__ import annotations
 
+import base64
+import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 # provider → (binary, args). The prompt goes in on stdin, or replaces "{prompt}"
@@ -79,15 +83,94 @@ def _fit_arg(prompt: str) -> str:
     return head[:max(keep, 0)] + "\n[…material truncated to fit]" + tail
 
 
-def run(provider: str, prompt: str) -> subprocess.CompletedProcess:
-    """Run `prompt` through the provider's CLI. Raises CliMissing, KeyError
+# Pasted images: claude takes them inline (stream-json content blocks); agy's
+# stream input is text-only, so they're saved into its empty working folder and
+# it may open them with view_file and nothing else (run_command stays denied).
+IMAGE_NOTE = (
+    "The user attached {n} image(s), saved in the current folder as {names}. Open them with "
+    "view_file and answer using them and the text below. Do not run any commands or open other files.\n\n"
+)
+_AGY_IMAGE_SETTINGS = '{"permissions": {"allow": ["view_file(*)"], "deny": ["command(*)", "run_command(*)"]}}'
+IMAGE_TYPES = {"image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/webp": "webp"}
+MAX_IMAGE_BYTES = 5_000_000
+MAX_IMAGES = 6
+
+# Offered in the model picker. claude takes aliases; agy's list comes from `agy models`.
+CLAUDE_MODELS = [("", "Default"), ("opus", "Opus"), ("sonnet", "Sonnet"), ("haiku", "Haiku")]
+_MODEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,79}$")
+_models_cache: dict[str, tuple[float, list[tuple[str, str]]]] = {}
+
+
+def models(provider: str) -> list[tuple[str, str]]:
+    """[(id, label)] for the model picker; "" = the CLI's own default."""
+    if provider == "claude":
+        return CLAUDE_MODELS
+    if provider != "gemini":
+        return [("", "Default")]
+    hit = _models_cache.get(provider)
+    if hit and time.monotonic() - hit[0] < 600:
+        return hit[1]
+    out = [("", "Default")]
+    exe = shutil.which("agy", path=search_path())
+    if exe:
+        try:
+            proc = subprocess.run([exe, "models"], capture_output=True, text=True, encoding="utf-8",
+                                  errors="replace", timeout=60, env={**os.environ, "PATH": search_path()})
+            for line in proc.stdout.splitlines():
+                mid, _, label = line.partition("\t")
+                if _MODEL_RE.match(mid.strip()):
+                    out.append((mid.strip(), label.strip() or mid.strip()))
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+    _models_cache[provider] = (time.monotonic(), out)
+    return out
+
+
+def _claude_stream_input(prompt: str, images: list[tuple[str, bytes]]) -> str:
+    content = [{"type": "image", "source": {"type": "base64", "media_type": mime,
+                                            "data": base64.b64encode(data).decode()}}
+               for mime, data in images]
+    content.append({"type": "text", "text": prompt})
+    return json.dumps({"type": "user", "message": {"role": "user", "content": content}}) + "\n"
+
+
+def _claude_stream_result(proc: subprocess.CompletedProcess) -> subprocess.CompletedProcess:
+    """Turn claude's stream-json output back into plain stdout/stderr."""
+    for line in reversed(proc.stdout.splitlines()):
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        if event.get("type") == "result":
+            text = str(event.get("result") or "")
+            if event.get("is_error"):
+                return subprocess.CompletedProcess(proc.args, proc.returncode or 1, "", text or proc.stderr)
+            return subprocess.CompletedProcess(proc.args, 0, text, proc.stderr)
+    return subprocess.CompletedProcess(proc.args, proc.returncode or 1, "", proc.stderr or proc.stdout[-2000:])
+
+
+def run(provider: str, prompt: str, model: str = "",
+        images: list[tuple[str, bytes]] | None = None) -> subprocess.CompletedProcess:
+    """Run `prompt` (plus optional pasted images as (mime, bytes)) through the
+    provider's CLI. Raises CliMissing, ValueError (bad model/image), KeyError
     (unknown provider) or subprocess.TimeoutExpired."""
     binary, args = COMMANDS[provider]
+    images = images or []
+    if model and not _MODEL_RE.match(model):
+        raise ValueError("invalid model name")
+    if len(images) > MAX_IMAGES or any(m not in IMAGE_TYPES or len(d) > MAX_IMAGE_BYTES for m, d in images):
+        raise ValueError(f"up to {MAX_IMAGES} PNG/JPEG/GIF/WebP images, 5 MB each")
+    if images and provider not in ("claude", "gemini"):
+        raise ValueError(f"{provider} can't take images here")
     path = search_path()
     exe = shutil.which(binary, path=path)
     if not exe:
         raise CliMissing(f"{binary} isn't installed — {LOGIN_HINT[provider]}")
-    prompt = NO_TOOLS_NOTE.get(provider, "") + prompt
+    names = [f"image-{i}.{IMAGE_TYPES[m]}" for i, (m, _) in enumerate(images, 1)]
+    if provider == "gemini" and images:
+        prompt = IMAGE_NOTE.format(n=len(names), names=", ".join(names)) + prompt
+    else:
+        prompt = NO_TOOLS_NOTE.get(provider, "") + prompt
     as_arg = "-p={prompt}" in args
     if as_arg and Path(exe).suffix.lower() in (".bat", ".cmd"):
         # cmd.exe re-parses a batch file's arguments: quotes, %, & and | in the
@@ -95,10 +178,22 @@ def run(provider: str, prompt: str) -> subprocess.CompletedProcess:
         raise CliMissing(f"{binary} is a batch-file wrapper ({exe}); point PATH at its .exe")
     arg_prompt = _fit_arg(prompt) if as_arg else ""
     argv = [exe, *(a.replace("{prompt}", arg_prompt) for a in args)]
-    # Empty cwd: the CLI sees nothing but the prompt.
+    if model:
+        argv[1:1] = ["--model", model]
+    stream = provider == "claude" and bool(images)
+    if stream:
+        argv += ["--input-format", "stream-json", "--output-format", "stream-json", "--verbose"]
+    if provider == "gemini" and images:
+        argv[1:1] = ["--settings", _AGY_IMAGE_SETTINGS]
+    stdin_text = _claude_stream_input(prompt, images) if stream else (None if as_arg else prompt)
+    # Empty cwd: the CLI sees nothing but the prompt (and, for agy, the pasted images).
     with tempfile.TemporaryDirectory(prefix="openstudy-ai-") as cwd:
-        return subprocess.run(
-            argv, input=None if as_arg else prompt, stdin=subprocess.DEVNULL if as_arg else None,
+        if provider == "gemini":
+            for name, (_, data) in zip(names, images):
+                (Path(cwd) / name).write_bytes(data)
+        proc = subprocess.run(
+            argv, input=stdin_text, stdin=subprocess.DEVNULL if stdin_text is None else None,
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             cwd=cwd, env={**os.environ, "PATH": path}, timeout=TIMEOUT_S,
         )
+    return _claude_stream_result(proc) if stream else proc

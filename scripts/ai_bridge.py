@@ -19,7 +19,9 @@ and in the backend's .env:
 
 Endpoints (all need `Authorization: Bearer <AI_BRIDGE_SECRET>`):
   GET  /providers  → {"installed": {"claude": true, ...}}
-  POST /run        {"provider", "prompt"} → {"returncode", "stdout", "stderr"}
+  GET  /models     → {"models": {"claude": [[id, label], ...], ...}}
+  POST /run        {"provider", "prompt", "model"?, "images"?: [{"mime", "data" (base64)}]}
+                   → {"returncode", "stdout", "stderr"}
 
 Listens on 127.0.0.1 only; Docker Desktop forwards host.docker.internal there.
 Without a console (pythonw.exe, a logon task) it logs to ai_bridge.log next to
@@ -28,6 +30,8 @@ the --env-file, or to --log-file.
 from __future__ import annotations
 
 import argparse
+import base64
+import binascii
 import hmac
 import json
 import os
@@ -40,7 +44,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from app import ai_cli  # noqa: E402  (stdlib-only module)
 
-MAX_BODY = 2_000_000
+MAX_BODY = 45_000_000  # 6 images × 5 MB, base64-encoded, plus the prompt
 _slots = threading.BoundedSemaphore(3)  # at most 3 CLI runs at once
 SECRET = ""
 
@@ -79,6 +83,10 @@ class Handler(BaseHTTPRequestHandler):
             return
         if self.path == "/providers":
             return self._reply(200, {"installed": ai_cli.installed()})
+        if self.path == "/models":
+            installed = ai_cli.installed()
+            return self._reply(200, {"models": {
+                pid: ai_cli.models(pid) for pid in ai_cli.COMMANDS if installed.get(pid)}})
         self._reply(404, {"error": "not found"})
 
     def do_POST(self):
@@ -92,16 +100,21 @@ class Handler(BaseHTTPRequestHandler):
         try:
             body = json.loads(self.rfile.read(length))
             provider, prompt = body["provider"], body["prompt"]
-            if provider not in ai_cli.COMMANDS or not isinstance(prompt, str) or not prompt:
+            model = body.get("model") or ""
+            images = [(img["mime"], base64.b64decode(img["data"], validate=True))
+                      for img in body.get("images") or []]
+            if provider not in ai_cli.COMMANDS or not isinstance(prompt, str) or not prompt or not isinstance(model, str):
                 raise ValueError
-        except (ValueError, KeyError, TypeError):
-            return self._reply(400, {"error": "expected {provider, prompt}"})
+        except (ValueError, KeyError, TypeError, binascii.Error):
+            return self._reply(400, {"error": "expected {provider, prompt, model?, images?}"})
         if not _slots.acquire(timeout=30):
             return self._reply(503, {"error": "busy, try again"})
         try:
-            proc = ai_cli.run(provider, prompt)
+            proc = ai_cli.run(provider, prompt, model, images)
         except ai_cli.CliMissing as exc:
             return self._reply(400, {"error": "missing", "message": str(exc)})
+        except ValueError as exc:
+            return self._reply(400, {"error": "invalid", "message": str(exc)})
         except subprocess.TimeoutExpired:
             return self._reply(504, {"error": "timeout"})
         finally:
