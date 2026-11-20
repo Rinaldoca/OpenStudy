@@ -971,12 +971,9 @@ function PdfPage({
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerUp}
       >
-        {(notes?.strokes ?? []).map((s, i) => (
-          <g key={i} transform={moveSel && picked.has(s) ? `translate(${moveSel.dx} ${moveSel.dy})` : undefined}>
-            <StrokePath s={s} />
-          </g>
-        ))}
-        {draft && <StrokePath s={{ c: color, w: tool === "hl" ? HL_WIDTH : PEN_WIDTH, hl: tool === "hl", pts: draft }} />}
+        {/* Images and text boxes first, ink on top: writing on a pasted image must
+            stay visible. Strokes inherit pointer-events: none outside drawing tools,
+            so they never block clicking an item underneath. */}
         {(notes?.items ?? []).map((raw, i) => (
           <ItemView
             key={i}
@@ -992,6 +989,12 @@ function PdfPage({
             onCommit={(text, height) => commitText(i, text, height)}
           />
         ))}
+        {(notes?.strokes ?? []).map((s, i) => (
+          <g key={i} transform={moveSel && picked.has(s) ? `translate(${moveSel.dx} ${moveSel.dy})` : undefined}>
+            <StrokePath s={s} />
+          </g>
+        ))}
+        {draft && <StrokePath s={{ c: color, w: tool === "hl" ? HL_WIDTH : PEN_WIDTH, hl: tool === "hl", pts: draft }} />}
         {boxDraft && (
           <rect
             x={Math.min(boxDraft[0], boxDraft[2])}
