@@ -494,3 +494,23 @@ def test_ai_access_local_mode_bridge_and_ai_users(monkeypatch):
     assert storage.ai_access(friend)
     # The folder picker never follows: it opens a dialog on the host's screen.
     assert not storage.machine_access(SENTINEL_USER_ID)
+
+
+def test_manifest_lists_files_recursively_relative_to_prefix(study_root):
+    import asyncio
+    import os
+    from app.services import storage
+
+    (study_root / "THIN" / "week1").mkdir(parents=True)
+    (study_root / "THIN" / "week1" / "a.pdf").write_bytes(b"12345")
+    (study_root / "THIN" / "notes.md").write_bytes(b"x")
+    (study_root / "THIN" / ".keep").write_bytes(b"")
+    (study_root / "THIN" / ".git").mkdir()
+    (study_root / "THIN" / ".git" / "HEAD").write_bytes(b"ref")
+    os.utime(study_root / "THIN" / "notes.md", (1_700_000_000, 1_700_000_000))
+
+    files = asyncio.run(storage.manifest(SENTINEL_USER_ID, "THIN"))
+    assert [f["path"] for f in files] == ["notes.md", "week1/a.pdf"]  # dotfiles and dot-dirs skipped
+    assert files[1]["size"] == 5 and files[0]["mtime_ms"] == 1_700_000_000_000
+    assert asyncio.run(storage.manifest(SENTINEL_USER_ID, "NOPE")) == []
+    assert asyncio.run(storage.manifest(SENTINEL_USER_ID, "../..")) == []  # can't escape the user root

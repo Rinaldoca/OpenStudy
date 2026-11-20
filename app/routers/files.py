@@ -98,6 +98,18 @@ async def list_files(prefix: str = Query(default=""), limit: int = Query(default
     return out
 
 
+@router.get("/manifest")
+async def manifest(prefix: str = Query(default=""), user: User = Depends(require_user)) -> dict[str, Any]:
+    """All files under `prefix`, recursively: {account, files: [{path, size, mtime_ms}]},
+    paths relative to `prefix`. Used by "Sync from computer" in the Files tab
+    to upload only what's new or changed; `account` keys the folder the
+    browser remembers, so two accounts on one browser don't share it."""
+    clean = (prefix or "").strip().strip("/")
+    if ".." in clean.split("/"):
+        raise HTTPException(400, "invalid prefix")
+    return {"account": str(user.id), "files": await storage_svc.manifest(user.id, clean)}
+
+
 @router.get("/signed-url")
 async def signed_url(path: str = Query(...), expires_in: int = Query(default=3600, ge=60, le=86400), user: User = Depends(require_user)) -> dict[str, Any]:
     """Mint a signed URL for the given object path. Default 1-hour expiry so

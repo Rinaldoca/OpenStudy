@@ -5,12 +5,14 @@ import {
   FileText,
   Folder,
   FolderPlus,
+  FolderSync,
   FolderUp,
   Image as ImageIcon,
   Loader2,
   MoreHorizontal,
   Pencil,
   Presentation,
+  RefreshCw,
   Link2,
   Search,
   Trash2,
@@ -41,6 +43,17 @@ import {
 } from "@/components/ui/dropdown";
 import { FileViewer } from "./file-viewer";
 import { eachLimited, fromDrop, fromInput, type PickedFile } from "@/lib/upload-tree";
+import { api } from "@/lib/api";
+import {
+  canRead,
+  canRemember,
+  chooseFolder,
+  planSync,
+  readFolder,
+  rememberedFolder,
+  stripRoot,
+  type RemoteFile,
+} from "@/lib/folder-sync";
 
 export function FileBrowser({
   rootPrefix = "",
@@ -57,6 +70,8 @@ export function FileBrowser({
   const folderInputRef = useRef<HTMLInputElement | null>(null);
   const [uploading, setUploading] = useState(false);
   const [dragOver, setDragOver] = useState(false);
+  const syncInputRef = useRef<HTMLInputElement | null>(null);
+  const [syncing, setSyncing] = useState(false);
   const upload = useUploadFile();
   const createFolder = useCreateFolder();
   const deleteEntry = useDeleteEntry();
@@ -110,6 +125,60 @@ export function FileBrowser({
         }),
         { id }
       );
+    }
+  }
+
+  async function fetchManifest() {
+    return api.get<{ account: string; files: RemoteFile[] }>("/api/files/manifest", { prefix });
+  }
+
+  async function applySync(local: PickedFile[], remote: RemoteFile[], name: string) {
+    const todo = planSync(local, remote);
+    if (todo.length === 0) {
+      toast.success(t("files.syncUpToDate", { name, count: local.length }));
+      return;
+    }
+    toast.message(t("files.syncFound", { name, count: todo.length }));
+    await uploadPicked(todo);
+  }
+
+  /** Sync this folder from one on the user's computer. `change` picks a new one. */
+  async function onSync(change = false) {
+    if (!canRemember) {
+      syncInputRef.current?.click(); // Safari/Firefox: choose the folder every time
+      return;
+    }
+    setSyncing(true);
+    try {
+      const manifest = await fetchManifest();
+      let handle = change ? null : await rememberedFolder(manifest.account, prefix);
+      if (!handle) handle = await chooseFolder(manifest.account, prefix);
+      if (!(await canRead(handle))) {
+        toast.error(t("files.syncNoAccess", { name: handle.name }));
+        return;
+      }
+      await applySync(await readFolder(handle), manifest.files, handle.name);
+    } catch (err) {
+      if ((err as DOMException)?.name === "AbortError") return; // picker cancelled
+      toast.error(t("files.syncFailed", { msg: (err as Error).message || "—" }));
+    } finally {
+      setSyncing(false);
+    }
+  }
+
+  async function onSyncInput(e: React.ChangeEvent<HTMLInputElement>) {
+    const picked = fromInput(e.target.files);
+    e.target.value = "";
+    if (picked.length === 0) return;
+    const name = picked[0].rel.split("/")[0];
+    setSyncing(true);
+    try {
+      const manifest = await fetchManifest();
+      await applySync(stripRoot(picked), manifest.files, name);
+    } catch (err) {
+      toast.error(t("files.syncFailed", { msg: (err as Error).message || "—" }));
+    } finally {
+      setSyncing(false);
     }
   }
 
@@ -318,6 +387,32 @@ export function FileBrowser({
             <FolderUp className="h-4 w-4" />
             {t("files.uploadFolder")}
           </button>
+          {prefix && (
+            <>
+              <button
+                type="button"
+                onClick={() => onSync()}
+                disabled={syncing || uploading || upload.isPending}
+                title={t(canRemember ? "files.syncHint" : "files.syncHintPick")}
+                className="touch-target inline-flex items-center gap-2 rounded-md border border-border/60 bg-surface-2 hover:bg-surface-2/80 px-3 text-sm font-medium disabled:opacity-50 transition-colors"
+              >
+                <RefreshCw className={cn("h-4 w-4", syncing && "animate-spin")} />
+                {t("files.sync")}
+              </button>
+              {canRemember && (
+                <button
+                  type="button"
+                  onClick={() => onSync(true)}
+                  disabled={syncing || uploading || upload.isPending}
+                  title={t("files.syncChange")}
+                  aria-label={t("files.syncChange")}
+                  className="touch-target inline-flex items-center rounded-md border border-border/60 bg-surface-2 hover:bg-surface-2/80 px-2 disabled:opacity-50 transition-colors"
+                >
+                  <FolderSync className="h-4 w-4" />
+                </button>
+              )}
+            </>
+          )}
         </div>
         <input
           ref={(el) => {
@@ -327,6 +422,15 @@ export function FileBrowser({
           }}
           type="file"
           onChange={onUpload}
+          className="hidden"
+        />
+        <input
+          ref={(el) => {
+            syncInputRef.current = el;
+            el?.setAttribute("webkitdirectory", "");
+          }}
+          type="file"
+          onChange={onSyncInput}
           className="hidden"
         />
         <input

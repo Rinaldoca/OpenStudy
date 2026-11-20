@@ -231,6 +231,26 @@ def _list_recursive_sync(user_id: UUID, prefix: str) -> list[str]:
     return out
 
 
+def _manifest_sync(user_id: UUID, prefix: str, limit: int) -> list[dict[str, Any]]:
+    try:
+        base = _safe_resolve(user_id, prefix)
+    except ValueError:
+        return []
+    if not base.is_dir():
+        return []
+    out: list[dict[str, Any]] = []
+    for p in base.rglob("*"):
+        rel = p.relative_to(base).as_posix()
+        if any(part.startswith(".") for part in rel.split("/")) or not p.is_file():
+            continue
+        st = p.stat()
+        out.append({"path": rel, "size": st.st_size, "mtime_ms": int(st.st_mtime * 1000)})
+        if len(out) >= limit:
+            break
+    out.sort(key=lambda e: e["path"])
+    return out
+
+
 def _download_sync(user_id: UUID, path: str) -> bytes:
     target = _safe_resolve(user_id, path)
     if not target.is_file():
@@ -329,6 +349,13 @@ async def list_recursive(user_id: UUID, prefix: str) -> list[str]:
     """Return every file path (relative to the user's root) under `prefix`,
     descending into subfolders. Skips dotfiles."""
     return await asyncio.to_thread(_list_recursive_sync, user_id, prefix)
+
+
+async def manifest(user_id: UUID, prefix: str, *, limit: int = 20_000) -> list[dict[str, Any]]:
+    """Every file under `prefix` (recursive, dotfiles skipped) with its size
+    and modification time, paths relative to `prefix`. The browser's folder
+    sync compares this with the folder on the user's computer."""
+    return await asyncio.to_thread(_manifest_sync, user_id, prefix, limit)
 
 
 async def download(user_id: UUID, path: str) -> bytes:
