@@ -691,16 +691,10 @@ function PdfPage({
       }
       return false;
     };
-    const hitItem = (it: Item) => {
-      const b = itemBox(it);
-      return x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h;
-    };
-    if (notes?.strokes?.some(hitStroke) || notes?.items?.some(hitItem)) {
-      onChange((p) => ({
-        ...p,
-        strokes: (p.strokes ?? []).filter((s) => !hitStroke(s)),
-        items: (p.items ?? []).filter((it) => !hitItem(it)),
-      }));
+    // Ink only: rubbing out writing on a pasted image must not delete the image.
+    // Images and text boxes are removed by selecting them (Delete key / trash button).
+    if (notes?.strokes?.some(hitStroke)) {
+      onChange((p) => ({ ...p, strokes: (p.strokes ?? []).filter((s) => !hitStroke(s)) }));
     }
   }
 
