@@ -152,6 +152,23 @@ export function AskAi() {
     return () => window.removeEventListener(ASK_EVENT, h);
   }, [resetSend, setActiveId]);
 
+  // While open (tablet/desktop), publish the panel's width as --ai-panel-w so
+  // the page and the file viewer make room instead of being covered; a PDF
+  // refits to its narrower pane, live while the edge is dragged.
+  const shown = open && enabled && Boolean(provider);
+  const pushWidth = clampWidth(liveWidth ?? width);
+  useEffect(() => {
+    const root = document.documentElement;
+    const apply = () =>
+      root.style.setProperty("--ai-panel-w", shown && window.innerWidth >= 640 ? `${clampWidth(pushWidth)}px` : "0px");
+    apply();
+    window.addEventListener("resize", apply);
+    return () => {
+      window.removeEventListener("resize", apply);
+      root.style.setProperty("--ai-panel-w", "0px");
+    };
+  }, [shown, pushWidth]);
+
   // Keep the newest message in view.
   useEffect(() => {
     endRef.current?.scrollIntoView({ block: "end" });

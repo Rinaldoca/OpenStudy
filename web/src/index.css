@@ -125,6 +125,8 @@
     text-rendering: optimizeLegibility;
     min-height: 100dvh;
     font-size: var(--base-font-size, 14px);
+    /* Room for the Ask AI panel while it's open (0 on phones; set by AskAi). */
+    padding-right: var(--ai-panel-w, 0px);
     line-height: 1.45;
     letter-spacing: -0.003em;
     overflow-x: hidden;

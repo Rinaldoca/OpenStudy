@@ -110,7 +110,8 @@ export function FileViewer({
   return (
     <div
       className={cn(
-        "fixed inset-0 z-50 flex flex-col bg-black/80 animate-in fade-in-0 duration-150",
+        // right: leaves room for the Ask AI panel when it's open (--ai-panel-w, set by AskAi).
+        "fixed inset-0 right-[var(--ai-panel-w,0px)] z-50 flex flex-col bg-black/80 animate-in fade-in-0 duration-150",
         hidden && "invisible pointer-events-none"
       )}
       aria-hidden={hidden}
