@@ -57,8 +57,12 @@ const MIN_ZOOM = 0.4;
 const MAX_ZOOM = 5;
 const MAX_CANVAS_PIXELS = 16_000_000; // per page; keeps memory sane at high zoom
 
-export function PdfView({ url, path }: { url: string; path: string }) {
+/** `focused`: with several files open (viewer tabs, side by side), only the
+ *  focused one reacts to paste, keyboard shortcuts and reports its page to Ask AI. */
+export function PdfView({ url, path, focused = true }: { url: string; path: string; focused?: boolean }) {
   const scrollerRef = useRef<HTMLDivElement>(null);
+  const focusedRef = useRef(focused);
+  focusedRef.current = focused;
   const [pdfjs, setPdfjs] = useState<PdfJs | null>(null);
   const [doc, setDoc] = useState<PDFDocumentProxy | null>(null);
   const [size, setSize] = useState({ w: 0, h: 0 }); // page 1, points
@@ -347,7 +351,7 @@ export function PdfView({ url, path }: { url: string; path: string }) {
   useEffect(() => {
     const inField = (t: EventTarget | null) => (t as HTMLElement)?.closest?.("input, textarea, [contenteditable]");
     const onPaste = (e: ClipboardEvent) => {
-      if (inField(e.target)) return;
+      if (!focusedRef.current || inField(e.target)) return;
       const file = Array.from(e.clipboardData?.files ?? []).find((f) => f.type.startsWith("image/"));
       if (file) {
         e.preventDefault();
@@ -355,6 +359,7 @@ export function PdfView({ url, path }: { url: string; path: string }) {
       }
     };
     const onKey = (e: KeyboardEvent) => {
+      if (!focusedRef.current) return;
       const a = activeRef.current;
       if (a && !a.editing && !inField(e.target)) {
         if (e.key === "Backspace" || e.key === "Delete") {
@@ -401,12 +406,12 @@ export function PdfView({ url, path }: { url: string; path: string }) {
       currentSlot.current = el.dataset.slot!;
       setPageLabel(`${els.indexOf(el) + 1} / ${els.length}`);
       const n = pageNumber(el.dataset.slot!);
-      if (n) setOpenPage(n);
+      if (n && focusedRef.current) setOpenPage(n);
     };
     scroller.addEventListener("scroll", onScroll, { passive: true });
     onScroll();
     return () => scroller.removeEventListener("scroll", onScroll);
-  }, [doc, notesLoaded, notes?.layout]);
+  }, [doc, notesLoaded, notes?.layout, focused]);
 
   async function exportPdf() {
     // Make sure my latest strokes are on the server before it renders the export.
@@ -457,6 +462,7 @@ export function PdfView({ url, path }: { url: string; path: string }) {
                 active={active?.slot === slot ? active : null}
                 setActive={(i, editing) => setActive(i === null ? null : { slot, i, editing })}
                 onDropImage={(file, at) => void insertImage(file, slot, at)}
+                focusedRef={focusedRef}
               />
             ))}
           </div>
@@ -584,6 +590,7 @@ function PdfPage({
   active,
   setActive,
   onDropImage,
+  focusedRef,
 }: {
   pdfjs: PdfJs;
   doc: PDFDocumentProxy;
@@ -599,6 +606,8 @@ function PdfPage({
   active: Active;
   setActive: (i: number | null, editing?: boolean) => void;
   onDropImage: (file: File, at: [number, number]) => void;
+  /** False while another open file is the one being worked in (side by side). */
+  focusedRef: React.RefObject<boolean>;
 }) {
   const n = pageNumber(slot);
   const ref = useRef<HTMLDivElement>(null);
@@ -833,7 +842,7 @@ function PdfPage({
   useEffect(() => {
     if (!hasSel && !hasArea) return;
     const onKey = (e: KeyboardEvent) => {
-      if ((e.target as HTMLElement)?.closest?.("input, textarea, [contenteditable]")) return;
+      if (!focusedRef.current || (e.target as HTMLElement)?.closest?.("input, textarea, [contenteditable]")) return;
       if ((e.key === "Backspace" || e.key === "Delete") && hasSel) {
         e.preventDefault();
         deleteSelectionRef.current();

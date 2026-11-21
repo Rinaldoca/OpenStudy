@@ -228,7 +228,14 @@
     "uploadFailed": "Upload failed: {{name}} — {{msg}}",
     "folderFailed": "Failed to create folder — {{msg}}",
     "renameFailed": "Rename failed — {{msg}}",
-    "deleteFailed": "Delete failed — {{msg}}"
+    "deleteFailed": "Delete failed — {{msg}}",
+    "closeTab": "Close {{name}}",
+    "openAnother": "Open another file",
+    "sideBySide": "Show two files side by side",
+    "closeViewer": "Close viewer",
+    "openInBrowserTab": "Open in a new browser tab",
+    "findFile": "Find a file to open…",
+    "noMatches": "No matching files."
   },
   "activity": {
     "title": "Activity",

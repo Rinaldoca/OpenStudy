@@ -228,7 +228,14 @@
     "uploadFailed": "Upload fehlgeschlagen: {{name}} — {{msg}}",
     "folderFailed": "Ordner konnte nicht angelegt werden — {{msg}}",
     "renameFailed": "Umbenennen fehlgeschlagen — {{msg}}",
-    "deleteFailed": "Löschen fehlgeschlagen — {{msg}}"
+    "deleteFailed": "Löschen fehlgeschlagen — {{msg}}",
+    "closeTab": "{{name}} schließen",
+    "openAnother": "Weitere Datei öffnen",
+    "sideBySide": "Zwei Dateien nebeneinander",
+    "closeViewer": "Ansicht schließen",
+    "openInBrowserTab": "In neuem Browser-Tab öffnen",
+    "findFile": "Datei zum Öffnen suchen…",
+    "noMatches": "Keine passenden Dateien."
   },
   "activity": {
     "title": "Aktivität",

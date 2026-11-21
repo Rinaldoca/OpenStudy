@@ -390,3 +390,7 @@
 .ai-md .katex { font-size: 1.12em; }
 .ai-md .katex-display { margin: 0.8em 0; padding: 0.2em 0; overflow-x: auto; overflow-y: hidden; }
 .ai-md .katex-display > .katex { font-size: 1.22em; }
+
+/* Scrollable strips (viewer tab bar) without a visible scrollbar. */
+.no-scrollbar { scrollbar-width: none; }
+.no-scrollbar::-webkit-scrollbar { display: none; }

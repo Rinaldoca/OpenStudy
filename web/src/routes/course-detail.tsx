@@ -51,7 +51,7 @@ import { DeliverableForm } from "@/components/forms/deliverable-form";
 import { LectureForm } from "@/components/forms/lecture-form";
 import { SlotForm } from "@/components/forms/slot-form";
 import { FileBrowser } from "@/components/files/file-browser";
-import { FileViewer } from "@/components/files/file-viewer";
+import { useOpenFiles } from "@/lib/open-files";
 import {
   useCompleteTask,
   useDashboard,
@@ -778,7 +778,7 @@ function LecturesTab({
   const { t } = useTranslation();
   const [editing, setEditing] = useState<Lecture | null>(null);
   const [creating, setCreating] = useState(false);
-  const [openMaterial, setOpenMaterial] = useState<string | null>(null);
+  const openFiles = useOpenFiles();
   const toggle = useToggleLectureAttended();
   const del = useDeleteLecture();
   const materials = useLectureMaterials(courseCode);
@@ -885,7 +885,7 @@ function LecturesTab({
                       <button
                         key={f.path}
                         type="button"
-                        onClick={() => setOpenMaterial(f.path)}
+                        onClick={() => openFiles.open(f.path)}
                         className="inline-flex items-center gap-1.5 text-xs px-2 py-1 rounded border border-border/50 bg-surface-2 hover:bg-surface-2/70 text-muted hover:text-fg transition-colors"
                       >
                         <FileText className="h-3 w-3 text-critical" />
@@ -912,7 +912,6 @@ function LecturesTab({
         courseCode={courseCode}
       />
 
-      {openMaterial && <FileViewer path={openMaterial} onClose={() => setOpenMaterial(null)} />}
     </div>
   );
 }

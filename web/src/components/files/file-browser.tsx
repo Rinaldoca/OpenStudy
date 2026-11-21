@@ -1,4 +1,5 @@
 import { useRef, useState } from "react";
+import { useSearchParams } from "react-router";
 import {
   ChevronRight,
   File as FileIcon,
@@ -41,7 +42,7 @@ import {
   DropdownItem,
   DropdownTrigger,
 } from "@/components/ui/dropdown";
-import { FileViewer } from "./file-viewer";
+import { useOpenFiles } from "@/lib/open-files";
 import { eachLimited, fromDrop, fromInput, type PickedFile } from "@/lib/upload-tree";
 import { api } from "@/lib/api";
 import {
@@ -64,8 +65,23 @@ export function FileBrowser({
 }) {
   const { t } = useTranslation();
   const effectiveRootLabel = rootLabel ?? t("files.title");
-  const [prefix, setPrefix] = useState(rootPrefix);
-  const [openPath, setOpenPath] = useState<string | null>(null);
+  // The folder you're in lives in the URL (?dir=…), so Back goes to the
+  // previous folder and a reload or link keeps it. Files open in the shared
+  // viewer (?file=…, lib/open-files.ts).
+  const [params, setParams] = useSearchParams();
+  const dirParam = params.get("dir");
+  const prefix =
+    dirParam && (!rootPrefix || dirParam === rootPrefix || dirParam.startsWith(`${rootPrefix}/`))
+      ? dirParam
+      : rootPrefix;
+  const setPrefix = (next: string) =>
+    setParams((prev) => {
+      const p = new URLSearchParams(prev);
+      if (next && next !== rootPrefix) p.set("dir", next);
+      else p.delete("dir");
+      return p;
+    });
+  const { open: setOpenPath } = useOpenFiles();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement | null>(null);
   const [uploading, setUploading] = useState(false);
@@ -542,7 +558,6 @@ export function FileBrowser({
         )}
       </div>
 
-      {openPath && <FileViewer path={openPath} onClose={() => setOpenPath(null)} />}
     </div>
   );
 }
