@@ -37,7 +37,7 @@ async def test_shared_chat_round_trip(db_conn, monkeypatch):
 
     calls = []
 
-    async def fake_run_ai(provider, prompt, user, model="", images=None):
+    async def fake_run_ai(provider, prompt, user, model="", images=None, course=None):
         calls.append({"provider": provider, "prompt": prompt, "model": model, "images": images or []})
         return "**Bold** answer with $x^2$"
     monkeypatch.setattr(ai_chats, "run_ai", fake_run_ai)

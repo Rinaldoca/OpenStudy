@@ -23,6 +23,7 @@ import asyncio
 import base64
 import os
 import subprocess
+from pathlib import Path
 from typing import Literal, Optional
 
 import httpx
@@ -159,8 +160,9 @@ def _prompt(body: AskBody, material: Optional[str]) -> str:
 Images = list[tuple[str, bytes]]
 
 
-async def _run_bridge(url: str, provider: str, prompt: str, model: str, images: Images) -> tuple[int, str, str]:
-    payload = {"provider": provider, "prompt": prompt, "model": model,
+async def _run_bridge(url: str, provider: str, prompt: str, model: str, images: Images,
+                      folder: str) -> tuple[int, str, str]:
+    payload = {"provider": provider, "prompt": prompt, "model": model, "folder": folder,
                "images": [{"mime": m, "data": base64.b64encode(d).decode()} for m, d in images]}
     try:
         async with httpx.AsyncClient(timeout=ai_cli.TIMEOUT_S + 30) as client:
@@ -178,9 +180,10 @@ async def _run_bridge(url: str, provider: str, prompt: str, model: str, images: 
     return int(data.get("returncode", 1)), data.get("stdout") or "", data.get("stderr") or ""
 
 
-async def _run_local(provider: str, prompt: str, model: str, images: Images) -> tuple[int, str, str]:
+async def _run_local(provider: str, prompt: str, model: str, images: Images,
+                     workdir: Path | None) -> tuple[int, str, str]:
     try:
-        proc = await asyncio.to_thread(ai_cli.run, provider, prompt, model, images)
+        proc = await asyncio.to_thread(ai_cli.run, provider, prompt, model, images, workdir)
     except (ai_cli.CliMissing, ValueError) as exc:
         raise HTTPException(400, str(exc)) from exc
     except subprocess.TimeoutExpired as exc:
@@ -188,15 +191,40 @@ async def _run_local(provider: str, prompt: str, model: str, images: Images) -> 
     return proc.returncode, proc.stdout, proc.stderr
 
 
-async def run_ai(provider: str, prompt: str, user: User, model: str = "", images: Images | None = None) -> str:
+def course_folder(user: User, folder: str) -> Path:
+    """The real folder behind one of the user's top-level course folders
+    (a friend's shared folder resolves to the owner's copy)."""
+    if not folder or "/" in folder or folder in (".", ".."):
+        raise HTTPException(400, "invalid course folder")
+    try:
+        target = storage_svc._safe_resolve(user.id, folder)
+    except ValueError as exc:
+        raise HTTPException(400, "invalid course folder") from exc
+    if not target.is_dir():
+        raise HTTPException(404, f"course folder {folder} not found")
+    return target
+
+
+async def run_ai(provider: str, prompt: str, user: User, model: str = "", images: Images | None = None,
+                 course: str | None = None) -> str:
     """Run `prompt` (+ pasted images) through the provider's CLI and return its
-    answer (HTTP errors on failure). `model` "" = the CLI's default."""
+    answer (HTTP errors on failure). `model` "" = the CLI's default. `course`:
+    a top-level course folder the AI may read (claude only, read-only)."""
     _require_ai(user)
+    if course and provider not in ai_cli.CAN_READ_FOLDER:
+        course = None  # the UI says so; answer from the open file instead of failing
+    workdir = course_folder(user, course) if course else None
     url = storage_svc.ai_bridge_url()
     if url and not storage_svc.local_mode():
-        code, stdout, stderr = await _run_bridge(url, provider, prompt, model, images or [])
+        folder = ""
+        if workdir is not None:
+            root = storage_svc._root().resolve()
+            if root not in workdir.parents:
+                raise HTTPException(400, "this course folder isn't in the server's file store")
+            folder = workdir.relative_to(root).as_posix()
+        code, stdout, stderr = await _run_bridge(url, provider, prompt, model, images or [], folder)
     else:
-        code, stdout, stderr = await _run_local(provider, prompt, model, images or [])
+        code, stdout, stderr = await _run_local(provider, prompt, model, images or [], workdir)
     answer = stdout.strip()
     if code != 0 or not answer:
         lines = (stderr or stdout).strip().splitlines()

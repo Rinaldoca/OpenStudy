@@ -48,7 +48,7 @@ def test_bridge_requires_the_secret(bridge):
 def test_bridge_runs_the_cli_and_reports_errors(bridge, monkeypatch):
     seen = {}
 
-    def fake_run(provider, prompt, model="", images=None):
+    def fake_run(provider, prompt, model="", images=None, workdir=None):
         seen.update(provider=provider, prompt=prompt)
         return subprocess.CompletedProcess([], 0, stdout="the answer", stderr="")
     monkeypatch.setattr(ai_cli, "run", fake_run)
@@ -57,7 +57,7 @@ def test_bridge_runs_the_cli_and_reports_errors(bridge, monkeypatch):
 
     assert _call(bridge, "/run", {"provider": "rm -rf", "prompt": "x"})[0] == 400
 
-    def missing(provider, prompt, model="", images=None):
+    def missing(provider, prompt, model="", images=None, workdir=None):
         raise ai_cli.CliMissing("agy isn't installed")
     monkeypatch.setattr(ai_cli, "run", missing)
     status, data = _call(bridge, "/run", {"provider": "gemini", "prompt": "x"})
@@ -137,13 +137,17 @@ def test_images_and_models_reach_each_cli_the_right_way(monkeypatch):
     assert block[0]["type"] == "image" and block[0]["source"]["media_type"] == "image/png"
     assert block[1] == {"type": "text", "text": "what colour?"} and seen["files"] == []
 
-    ai_cli.run("gemini", "what colour?", "gemini-3.8-flash-high", [png, ("image/jpeg", b"jpg")])
+    # agy can read any host file once a file tool is allowed, so it never gets
+    # images (they'd have to be files) and always runs with every tool denied.
+    with pytest.raises(ValueError, match="only Claude"):
+        ai_cli.run("gemini", "what colour?", "", [png])
+    ai_cli.run("gemini", "what is a DFA?", "gemini-3.8-flash-high")
     argv = seen["argv"]
-    assert seen["files"] == ["image-1.png", "image-2.jpg"]  # saved for view_file
-    settings = _json.loads(argv[argv.index("--settings") + 1])
-    assert settings["permissions"]["allow"] == ["view_file(*)"] and "run_command(*)" in settings["permissions"]["deny"]
+    settings = _json.loads(argv[argv.index("--settings") + 1])["permissions"]
+    assert "allow" not in settings and seen["files"] == []
+    for tool in ("view_file", "list_dir", "grep_search", "run_command", "read_url_content", "write_to_file"):
+        assert f"{tool}(*)" in settings["deny"]
     assert argv[argv.index("--model") + 1] == "gemini-3.8-flash-high" and "plan" in argv
-    assert next(a for a in argv if a.startswith("-p=")).startswith("-p=The user attached 2 image(s)")
 
     with pytest.raises(ValueError):
         ai_cli.run("claude", "x", "sonnet; rm -rf /")

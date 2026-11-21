@@ -235,7 +235,11 @@
     "closeViewer": "Close viewer",
     "openInBrowserTab": "Open in a new browser tab",
     "findFile": "Find a file to open…",
-    "noMatches": "No matching files."
+    "noMatches": "No matching files.",
+    "home": "Back to your folders (keeps these tabs open)",
+    "openFiles_one": "{{count}} open file",
+    "openFiles_other": "{{count}} open files",
+    "alreadyOpen": "open"
   },
   "activity": {
     "title": "Activity",
@@ -850,7 +854,10 @@
     "removeContext": "Don't include this file",
     "tooManyImages": "Up to 6 images per message",
     "imageFailed": "Couldn't add image — {{msg}}",
-    "you": "You"
+    "you": "You",
+    "courseFiles": "Claude can read the files in {{course}}",
+    "geminiNoFiles": "Gemini only sees the open file's text. To let the AI read your course files or images, switch to Claude.",
+    "imagesNeedClaude": "Only Claude can look at images — switch to Claude or remove the images."
   },
   "quiz": {
     "title": "Quiz",

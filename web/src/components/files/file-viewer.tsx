@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Columns2, ExternalLink, File as FileIcon, Loader2, Plus, Search, X } from "lucide-react";
+import { ChevronRight, Columns2, ExternalLink, File as FileIcon, Folder, Home, Layers, Loader2, Plus, Search, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { setOpenFile } from "@/lib/ai";
 import { api } from "@/lib/api";
@@ -12,10 +12,24 @@ export const fileName = (path: string) => path.split("/").pop() || path;
 
 /** The one file viewer, mounted in the app shell; opened via useOpenFiles().open(path). */
 export function OpenFilesViewer() {
-  const { tabs, active, split, open, activate, closeTab, setSplit, closeAll } = useOpenFiles();
+  const { t } = useTranslation();
+  const { tabs, active, split, hidden, open, activate, closeTab, setSplit, closeAll, hide, show } = useOpenFiles();
   if (!active) return null;
   return (
-    <FileViewer
+    <>
+      {hidden && (
+        <button
+          type="button"
+          onClick={show}
+          className="fixed z-[45] left-4 bottom-24 md:bottom-6 inline-flex items-center gap-2 rounded-full bg-fg text-bg px-4 py-2.5 text-sm font-medium shadow-lg hover:scale-105 transition-transform"
+        >
+          <Layers className="h-4 w-4" />
+          {t("files.openFiles", { count: tabs.length })}
+        </button>
+      )}
+      <FileViewer
+      hidden={hidden}
+      onHome={hide}
       tabs={tabs}
       active={active}
       split={split}
@@ -26,7 +40,8 @@ export function OpenFilesViewer() {
       onCloseTab={closeTab}
       onSplit={setSplit}
       onClose={closeAll}
-    />
+      />
+    </>
   );
 }
 
@@ -36,6 +51,8 @@ export function OpenFilesViewer() {
  *  browser's Back button and reloads keep it. Tabs stay mounted while open,
  *  so each keeps its scroll position and zoom. */
 export function FileViewer({
+  hidden = false,
+  onHome,
   tabs,
   active,
   split,
@@ -46,6 +63,9 @@ export function FileViewer({
   onSplit,
   onClose,
 }: {
+  /** Tucked away by Home: stays mounted (tabs keep scroll and zoom) but invisible. */
+  hidden?: boolean;
+  onHome?: () => void;
   tabs: string[];
   active: string;
   /** Second file shown next to `active`, or null. */
@@ -66,9 +86,9 @@ export function FileViewer({
   const focusedPath = showSplit && focus === "split" ? showSplit : active;
 
   useEffect(() => {
-    setOpenFile(focusedPath);
+    setOpenFile(hidden ? null : focusedPath);
     return () => setOpenFile(null);
-  }, [focusedPath]);
+  }, [focusedPath, hidden]);
   useEffect(() => {
     if (!showSplit) setFocus("main");
   }, [showSplit]);
@@ -77,22 +97,40 @@ export function FileViewer({
   // while it uses it for its own selection.)
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
-      if (e.key !== "Escape") return;
+      if (e.key !== "Escape" || hidden) return;
       if (picker) setPicker(false);
       else onClose();
     };
     window.addEventListener("keydown", h);
     return () => window.removeEventListener("keydown", h);
-  }, [onClose, picker]);
+  }, [onClose, picker, hidden]);
 
   const other = tabs.filter((p) => p !== active).slice(-1)[0];
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-black/80 animate-in fade-in-0 duration-150" onClick={onClose}>
+    <div
+      className={cn(
+        "fixed inset-0 z-50 flex flex-col bg-black/80 animate-in fade-in-0 duration-150",
+        hidden && "invisible pointer-events-none"
+      )}
+      aria-hidden={hidden}
+      onClick={onClose}
+    >
       <div
         className="flex items-center gap-1 px-2 pt-2 border-b border-border/60 bg-surface safe-top"
         onClick={(e) => e.stopPropagation()}
       >
+        {onHome && (
+          <button
+            type="button"
+            onClick={onHome}
+            aria-label={t("files.home")}
+            title={t("files.home")}
+            className="shrink-0 mb-1 touch-target inline-flex items-center justify-center rounded-md text-muted hover:text-fg hover:bg-surface-2"
+          >
+            <Home className="h-4 w-4" />
+          </button>
+        )}
         <div className="flex-1 min-w-0 flex items-end gap-1 overflow-x-auto no-scrollbar">
           {tabs.map((p) => {
             const isActive = p === active;
@@ -245,7 +283,8 @@ function Pane({ path, visible, focused }: { path: string; visible: boolean; focu
   );
 }
 
-/** + in the tab bar: find another file to open (all files under the course / everything). */
+/** + in the tab bar: browse folders (starting in the active file's course) or
+ *  search every file below the folder you're in, and open one in a new tab. */
 function FilePicker({
   root,
   open,
@@ -258,27 +297,66 @@ function FilePicker({
   onClose: () => void;
 }) {
   const { t } = useTranslation();
+  const [dir, setDir] = useState(root);
   const [q, setQ] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
+  // One listing of everything; folders are derived from the file paths.
   const manifest = useQuery({
-    queryKey: ["files", "manifest", root],
-    queryFn: () => api.get<{ files: { path: string }[] }>("/api/files/manifest", { prefix: root }),
+    queryKey: ["files", "manifest", ""],
+    queryFn: () => api.get<{ files: { path: string }[] }>("/api/files/manifest", { prefix: "" }),
     staleTime: 30_000,
   });
   useEffect(() => inputRef.current?.focus(), []);
+
+  const all = useMemo(() => (manifest.data?.files ?? []).map((f) => f.path), [manifest.data]);
+  const under = dir ? `${dir}/` : "";
+  const { folders, files } = useMemo(() => {
+    const folderSet = new Set<string>();
+    const fileList: string[] = [];
+    for (const p of all) {
+      if (!p.startsWith(under)) continue;
+      const rest = p.slice(under.length);
+      const slash = rest.indexOf("/");
+      if (slash === -1) fileList.push(p);
+      else folderSet.add(rest.slice(0, slash));
+    }
+    const byName = (a: string, b: string) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" });
+    return {
+      folders: [...folderSet].sort(byName),
+      files: fileList.sort((a, b) => byName(fileName(a), fileName(b))),
+    };
+  }, [all, under]);
   const matches = useMemo(() => {
     const words = q.toLowerCase().split(/\s+/).filter(Boolean);
-    return (manifest.data?.files ?? [])
-      .map((f) => (root ? `${root}/${f.path}` : f.path))
-      .filter((p) => !open.includes(p))
-      .filter((p) => words.every((w) => p.toLowerCase().includes(w)))
-      .slice(0, 200);
-  }, [manifest.data, q, open, root]);
+    if (!words.length) return null;
+    return all.filter((p) => p.startsWith(under) && words.every((w) => p.toLowerCase().includes(w))).slice(0, 200);
+  }, [all, q, under]);
+  const crumbs = dir ? dir.split("/") : [];
+
+  const fileRow = (p: string, showPath: boolean) => {
+    const isOpen = open.includes(p);
+    return (
+      <button
+        key={p}
+        type="button"
+        disabled={isOpen}
+        onClick={() => onPick(p)}
+        className="w-full flex items-center gap-3 px-4 py-2 text-left hover:bg-surface-2 disabled:opacity-50 disabled:hover:bg-transparent"
+      >
+        <FileIcon className="h-4 w-4 shrink-0 text-muted" />
+        <span className="min-w-0 flex-1">
+          <span className="block text-sm truncate">{fileName(p)}</span>
+          {showPath && <span className="block text-[11px] text-muted truncate">{p}</span>}
+        </span>
+        {isOpen && <span className="text-[11px] text-muted shrink-0">{t("files.alreadyOpen")}</span>}
+      </button>
+    );
+  };
 
   return (
-    <div className="fixed inset-0 z-[55] flex items-start justify-center bg-black/40 p-4 pt-[12vh]" onClick={onClose}>
+    <div className="fixed inset-0 z-[55] flex items-start justify-center bg-black/40 p-4 pt-[10vh]" onClick={onClose}>
       <div
-        className="w-full max-w-lg rounded-lg border border-border/60 bg-surface shadow-2xl flex flex-col max-h-[70vh]"
+        className="w-full max-w-lg rounded-lg border border-border/60 bg-surface shadow-2xl flex flex-col max-h-[75vh]"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="relative border-b border-border/60">
@@ -288,26 +366,54 @@ function FilePicker({
             value={q}
             onChange={(e) => setQ(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && matches[0]) onPick(matches[0]);
+              const first = matches?.find((p) => !open.includes(p));
+              if (e.key === "Enter" && first) onPick(first);
             }}
             placeholder={t("files.findFile")}
             className="w-full bg-transparent pl-9 pr-3 py-3 text-sm focus:outline-none"
           />
         </div>
+        <nav className="flex items-center gap-1 flex-wrap px-4 py-2 text-xs text-muted border-b border-border/60">
+          <button type="button" onClick={() => setDir("")} className="hover:text-fg">
+            {t("files.title")}
+          </button>
+          {crumbs.map((seg, i) => (
+            <span key={i} className="flex items-center gap-1">
+              <ChevronRight className="h-3 w-3" />
+              <button type="button" onClick={() => setDir(crumbs.slice(0, i + 1).join("/"))} className="hover:text-fg">
+                {seg}
+              </button>
+            </span>
+          ))}
+        </nav>
         <div className="flex-1 min-h-0 overflow-y-auto py-1">
           {manifest.isPending && <Loader2 className="h-4 w-4 animate-spin text-muted m-4" />}
-          {manifest.data && matches.length === 0 && <p className="p-4 text-sm text-muted">{t("files.noMatches")}</p>}
-          {matches.map((p) => (
-            <button
-              key={p}
-              type="button"
-              onClick={() => onPick(p)}
-              className="w-full flex flex-col items-start px-4 py-2 text-left hover:bg-surface-2"
-            >
-              <span className="text-sm truncate max-w-full">{fileName(p)}</span>
-              <span className="text-[11px] text-muted truncate max-w-full">{p}</span>
-            </button>
-          ))}
+          {matches ? (
+            matches.length === 0 ? (
+              <p className="p-4 text-sm text-muted">{t("files.noMatches")}</p>
+            ) : (
+              matches.map((p) => fileRow(p, true))
+            )
+          ) : (
+            <>
+              {folders.map((f) => (
+                <button
+                  key={f}
+                  type="button"
+                  onClick={() => setDir(under + f)}
+                  className="w-full flex items-center gap-3 px-4 py-2 text-left hover:bg-surface-2"
+                >
+                  <Folder className="h-4 w-4 shrink-0 text-muted" />
+                  <span className="text-sm truncate flex-1">{f}</span>
+                  <ChevronRight className="h-4 w-4 text-muted" />
+                </button>
+              ))}
+              {files.map((p) => fileRow(p, false))}
+              {manifest.data && !folders.length && !files.length && (
+                <p className="p-4 text-sm text-muted">{t("files.emptyFolder")}</p>
+              )}
+            </>
+          )}
         </div>
       </div>
     </div>

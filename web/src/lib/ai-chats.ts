@@ -65,6 +65,8 @@ export type SendInput = {
   path?: string;
   page?: number;
   images: PastedImage[];
+  /** Course folder the AI may read (Claude); "" = off. */
+  course: string;
 };
 
 export function useSendMessage(onChatCreated: (id: string) => void) {
@@ -85,6 +87,7 @@ export function useSendMessage(onChatCreated: (id: string) => void) {
         path: input.path,
         page: input.page,
         images: input.images.map(({ mime, data }) => ({ mime, data })),
+        course: input.course,
       });
     },
     onSuccess: (chat) => {

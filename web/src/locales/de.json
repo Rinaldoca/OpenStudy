@@ -235,7 +235,11 @@
     "closeViewer": "Ansicht schließen",
     "openInBrowserTab": "In neuem Browser-Tab öffnen",
     "findFile": "Datei zum Öffnen suchen…",
-    "noMatches": "Keine passenden Dateien."
+    "noMatches": "Keine passenden Dateien.",
+    "home": "Zurück zu deinen Ordnern (Tabs bleiben offen)",
+    "openFiles_one": "{{count}} offene Datei",
+    "openFiles_other": "{{count}} offene Dateien",
+    "alreadyOpen": "offen"
   },
   "activity": {
     "title": "Aktivität",
@@ -850,7 +854,10 @@
     "removeContext": "Diese Datei nicht mitschicken",
     "tooManyImages": "Höchstens 6 Bilder pro Nachricht",
     "imageFailed": "Bild konnte nicht hinzugefügt werden — {{msg}}",
-    "you": "Du"
+    "you": "Du",
+    "courseFiles": "Claude darf die Dateien in {{course}} lesen",
+    "geminiNoFiles": "Gemini sieht nur den Text der offenen Datei. Damit die KI deine Kursdateien oder Bilder lesen kann, wechsle zu Claude.",
+    "imagesNeedClaude": "Nur Claude kann Bilder ansehen — wechsle zu Claude oder entferne die Bilder."
   },
   "quiz": {
     "title": "Quiz",

@@ -83,14 +83,31 @@ def _fit_arg(prompt: str) -> str:
     return head[:max(keep, 0)] + "\n[…material truncated to fit]" + tail
 
 
-# Pasted images: claude takes them inline (stream-json content blocks); agy's
-# stream input is text-only, so they're saved into its empty working folder and
-# it may open them with view_file and nothing else (run_command stays denied).
-IMAGE_NOTE = (
-    "The user attached {n} image(s), saved in the current folder as {names}. Open them with "
-    "view_file and answer using them and the text below. Do not run any commands or open other files.\n\n"
+# agy gets NO file, command or web tools. Tested 2026-11-21: with view_file
+# allowed it read a decoy file anywhere on the host, and path-scoped rules
+# (view_file(<dir>/**)) did not stop it — so it can't be given pasted images
+# (its input is text-only; they'd have to be files) or the course folder.
+_AGY_LOCKDOWN = json.dumps({"permissions": {"deny": [
+    f"{tool}(*)" for tool in (
+        "view_file", "list_dir", "grep_search", "find_by_name", "read_resource", "list_resources",
+        "command", "run_command", "send_command_input", "write_to_file", "replace_file_content",
+        "multi_replace_file_content", "sed_file", "notebook_edit", "notebook_execution",
+        "read_url_content", "search_web", "open_browser_url", "read_browser_page", "browser_subagent",
+        "call_mcp_tool", "invoke_subagent", "generate_image",
+    )
+]}})
+
+# claude can read the course folder: started there with only Read/Glob/Grep,
+# it can't write, run anything or reach the web, and reads outside its working
+# folder are refused (no one to approve them in -p mode; tested with a decoy).
+CLAUDE_READ_TOOLS = "Read,Glob,Grep"
+COURSE_NOTE = (
+    "The current folder is the student's course folder (lecture slides, exercise sheets, solutions). "
+    "Use Glob, Grep and Read to find and open the files that help answer, and mention which files you used. "
+    "Only read files; never try to leave this folder.\n\n"
 )
-_AGY_IMAGE_SETTINGS = '{"permissions": {"allow": ["view_file(*)"], "deny": ["command(*)", "run_command(*)"]}}'
+
+# Pasted images: claude takes them inline (stream-json content blocks).
 IMAGE_TYPES = {"image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/webp": "webp"}
 MAX_IMAGE_BYTES = 5_000_000
 MAX_IMAGES = 6
@@ -149,28 +166,33 @@ def _claude_stream_result(proc: subprocess.CompletedProcess) -> subprocess.Compl
     return subprocess.CompletedProcess(proc.args, proc.returncode or 1, "", proc.stderr or proc.stdout[-2000:])
 
 
+CAN_SEE_IMAGES = {"claude"}
+CAN_READ_FOLDER = {"claude"}
+
+
 def run(provider: str, prompt: str, model: str = "",
-        images: list[tuple[str, bytes]] | None = None) -> subprocess.CompletedProcess:
+        images: list[tuple[str, bytes]] | None = None,
+        workdir: Path | None = None) -> subprocess.CompletedProcess:
     """Run `prompt` (plus optional pasted images as (mime, bytes)) through the
-    provider's CLI. Raises CliMissing, ValueError (bad model/image), KeyError
-    (unknown provider) or subprocess.TimeoutExpired."""
+    provider's CLI. `workdir`: a course folder the AI may read (claude only);
+    otherwise it runs in an empty temp folder with no tools. Raises CliMissing,
+    ValueError (bad model/image/folder), KeyError (unknown provider) or
+    subprocess.TimeoutExpired."""
     binary, args = COMMANDS[provider]
     images = images or []
     if model and not _MODEL_RE.match(model):
         raise ValueError("invalid model name")
     if len(images) > MAX_IMAGES or any(m not in IMAGE_TYPES or len(d) > MAX_IMAGE_BYTES for m, d in images):
         raise ValueError(f"up to {MAX_IMAGES} PNG/JPEG/GIF/WebP images, 5 MB each")
-    if images and provider not in ("claude", "gemini"):
-        raise ValueError(f"{provider} can't take images here")
+    if images and provider not in CAN_SEE_IMAGES:
+        raise ValueError("only Claude can look at pasted images — switch to Claude for this question")
+    if workdir is not None and (provider not in CAN_READ_FOLDER or not workdir.is_dir()):
+        raise ValueError("only Claude can read the course folder")
     path = search_path()
     exe = shutil.which(binary, path=path)
     if not exe:
         raise CliMissing(f"{binary} isn't installed — {LOGIN_HINT[provider]}")
-    names = [f"image-{i}.{IMAGE_TYPES[m]}" for i, (m, _) in enumerate(images, 1)]
-    if provider == "gemini" and images:
-        prompt = IMAGE_NOTE.format(n=len(names), names=", ".join(names)) + prompt
-    else:
-        prompt = NO_TOOLS_NOTE.get(provider, "") + prompt
+    prompt = (COURSE_NOTE if workdir is not None else NO_TOOLS_NOTE.get(provider, "")) + prompt
     as_arg = "-p={prompt}" in args
     if as_arg and Path(exe).suffix.lower() in (".bat", ".cmd"):
         # cmd.exe re-parses a batch file's arguments: quotes, %, & and | in the
@@ -178,22 +200,27 @@ def run(provider: str, prompt: str, model: str = "",
         raise CliMissing(f"{binary} is a batch-file wrapper ({exe}); point PATH at its .exe")
     arg_prompt = _fit_arg(prompt) if as_arg else ""
     argv = [exe, *(a.replace("{prompt}", arg_prompt) for a in args)]
+    if provider == "claude" and workdir is not None:
+        argv[argv.index("--tools") + 1] = CLAUDE_READ_TOOLS
     if model:
         argv[1:1] = ["--model", model]
+    if provider == "gemini":
+        argv[1:1] = ["--settings", _AGY_LOCKDOWN]
     stream = provider == "claude" and bool(images)
     if stream:
         argv += ["--input-format", "stream-json", "--output-format", "stream-json", "--verbose"]
-    if provider == "gemini" and images:
-        argv[1:1] = ["--settings", _AGY_IMAGE_SETTINGS]
     stdin_text = _claude_stream_input(prompt, images) if stream else (None if as_arg else prompt)
-    # Empty cwd: the CLI sees nothing but the prompt (and, for agy, the pasted images).
-    with tempfile.TemporaryDirectory(prefix="openstudy-ai-") as cwd:
-        if provider == "gemini":
-            for name, (_, data) in zip(names, images):
-                (Path(cwd) / name).write_bytes(data)
-        proc = subprocess.run(
+
+    def call(cwd: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
             argv, input=stdin_text, stdin=subprocess.DEVNULL if stdin_text is None else None,
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             cwd=cwd, env={**os.environ, "PATH": path}, timeout=TIMEOUT_S,
         )
+    if workdir is not None:
+        proc = call(str(workdir))
+    else:
+        # Empty cwd: the CLI sees nothing but the prompt.
+        with tempfile.TemporaryDirectory(prefix="openstudy-ai-") as cwd:
+            proc = call(cwd)
     return _claude_stream_result(proc) if stream else proc

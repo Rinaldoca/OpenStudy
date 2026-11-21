@@ -16,6 +16,8 @@ export function useOpenFiles() {
   const activeParam = params.get("active");
   const active = activeParam && tabs.includes(activeParam) ? activeParam : (tabs[tabs.length - 1] ?? null);
   const split = params.get("split");
+  // Home: the viewer is tucked away (tabs stay open) until shown again.
+  const hidden = params.get("viewer") === "hidden";
 
   const update = useCallback(
     (fn: (p: URLSearchParams) => void, replace: boolean) =>
@@ -45,6 +47,7 @@ export function useOpenFiles() {
         p.delete("file");
         files.forEach((f) => p.append("file", f));
         p.set("active", path);
+        p.delete("viewer");
       }, false),
     [update]
   );
@@ -73,6 +76,7 @@ export function useOpenFiles() {
         if (files.length === 0) {
           p.delete("active");
           p.delete("split");
+          p.delete("viewer");
         }
       }, true),
     [update]
@@ -93,9 +97,14 @@ export function useOpenFiles() {
         p.delete("file");
         p.delete("active");
         p.delete("split");
+        p.delete("viewer");
       }, false),
     [update]
   );
 
-  return { tabs, active, split, open, activate, closeTab, setSplit, closeAll };
+  // Pushes, so Back from the folders brings the viewer straight back.
+  const hide = useCallback(() => update((p) => p.set("viewer", "hidden"), false), [update]);
+  const show = useCallback(() => update((p) => p.delete("viewer"), true), [update]);
+
+  return { tabs, active, split, hidden, open, activate, closeTab, setSplit, closeAll, hide, show };
 }

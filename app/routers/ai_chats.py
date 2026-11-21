@@ -142,6 +142,8 @@ class MessageIn(BaseModel):
     path: Optional[str] = Field(default=None, max_length=1000)
     page: Optional[int] = Field(default=None, ge=1)
     images: list[ImageIn] = Field(default_factory=list, max_length=ai_cli.MAX_IMAGES)
+    # Let the AI read this course folder (top-level folder name; claude only).
+    course: Optional[str] = Field(default=None, max_length=200)
 
 
 def _decode_images(images: list[ImageIn]) -> list[tuple[str, bytes]]:
@@ -218,7 +220,14 @@ async def send_message(chat_id: UUID, body: MessageIn, user: User = Depends(requ
 
     prompt = build_prompt(history, material, ctx, body.question, user.display_name or "the student", len(images))
     try:
-        answer, role = await run_ai(body.provider, prompt, user, body.model, images), "assistant"
+        # course "" = the user switched course access off; None = use the course
+        # of the file this chat is about (its first path segment), if any.
+        if body.course == "":
+            course = None
+        else:
+            ctx_path = ctx.get("path") or ""
+            course = body.course or (ctx_path.split("/")[0] if "/" in ctx_path else None)
+        answer, role = await run_ai(body.provider, prompt, user, body.model, images, course), "assistant"
     except HTTPException as exc:
         answer, role = str(exc.detail), "error"
     await db.execute(

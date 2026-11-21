@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   Check,
+  FolderOpen,
   ImagePlus,
   Loader2,
   PanelLeft,
@@ -18,6 +19,7 @@ import {
   PROVIDER_LABELS,
   askAi,
   currentContext,
+  getOpenFile,
   useAiProviders,
   useDefaultProvider,
   type AskContext,
@@ -106,6 +108,7 @@ export function AskAi() {
   const [liveWidth, setLiveWidth] = useState<number | null>(null);
   const [sidebar, setSidebar] = useStored("openstudy.aiSidebar", true);
   const [chosenModels, setChosenModels] = useStored<Record<string, string>>("openstudy.aiModels", {});
+  const [courseFiles, setCourseFiles] = useStored("openstudy.aiCourseFiles", true);
   const [popup, setPopup] = useState<{ x: number; y: number; ctx: AskContext } | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -215,7 +218,7 @@ export function AskAi() {
 
   function sendNow() {
     const q = question.trim();
-    if (!q || send.isPending) return;
+    if (!q || send.isPending || imagesBlocked) return;
     const pdf = ctx.path?.toLowerCase().endsWith(".pdf");
     send.mutate(
       {
@@ -227,6 +230,7 @@ export function AskAi() {
         path: ctx.path,
         page: pdf && Number(page) > 0 ? Number(page) : undefined,
         images,
+        course: courseFiles && canReadFolder ? course : "",
       },
       {
         onSuccess: () => {
@@ -260,6 +264,18 @@ export function AskAi() {
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
   }
+
+  // The course the AI may read: of the file this question is about, the open
+  // file, the folder you're in (?dir=), or the chat's last question.
+  const firstSegment = (p?: string | null) => (p && p.includes("/") ? p.split("/")[0] : "");
+  const course =
+    firstSegment(ctx.path) ||
+    firstSegment(getOpenFile()) ||
+    (new URLSearchParams(window.location.search).get("dir") ?? "").split("/")[0] ||
+    firstSegment([...messages].reverse().find((m) => m.context?.path)?.context?.path);
+  const canReadFolder = currentProvider === "claude";
+  const canSeeImages = currentProvider === "claude";
+  const imagesBlocked = images.length > 0 && !canSeeImages;
 
   const panelWidth = clampWidth(liveWidth ?? width);
   const wide = panelWidth >= 640;
@@ -543,6 +559,23 @@ export function AskAi() {
                   ))}
                 </div>
               )}
+              {course && canReadFolder && (
+                <label className="flex items-center gap-2 text-xs text-muted cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={courseFiles}
+                    onChange={(e) => setCourseFiles(e.target.checked)}
+                    className="accent-current"
+                  />
+                  <FolderOpen className="h-3.5 w-3.5" />
+                  <span className="truncate">{t("ai.courseFiles", { course })}</span>
+                </label>
+              )}
+              {!canReadFolder && (course || images.length > 0) && (
+                <p className={cn("text-xs", imagesBlocked ? "text-critical" : "text-muted")}>
+                  {t(imagesBlocked ? "ai.imagesNeedClaude" : "ai.geminiNoFiles")}
+                </p>
+              )}
               <textarea
                 ref={inputRef}
                 value={question}
@@ -609,7 +642,7 @@ export function AskAi() {
                 <button
                   type="button"
                   onClick={sendNow}
-                  disabled={!question.trim() || send.isPending}
+                  disabled={!question.trim() || send.isPending || imagesBlocked}
                   aria-label={t("ai.send")}
                   className="touch-target inline-flex items-center justify-center rounded-md bg-fg text-bg px-3 disabled:opacity-50"
                 >

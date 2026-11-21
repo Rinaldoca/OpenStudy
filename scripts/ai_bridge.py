@@ -20,8 +20,14 @@ and in the backend's .env:
 Endpoints (all need `Authorization: Bearer <AI_BRIDGE_SECRET>`):
   GET  /providers  → {"installed": {"claude": true, ...}}
   GET  /models     → {"models": {"claude": [[id, label], ...], ...}}
-  POST /run        {"provider", "prompt", "model"?, "images"?: [{"mime", "data" (base64)}]}
+  POST /run        {"provider", "prompt", "model"?, "images"?: [{"mime", "data" (base64)}],
+                    "folder"?: course folder relative to the file store}
                    → {"returncode", "stdout", "stderr"}
+
+"folder" lets the AI read that course folder (claude only, read-only tools).
+It's resolved under AI_BRIDGE_STUDY_ROOT from the --env-file — this host's
+path of the backend's STUDY_ROOT bind mount — and refused if it would land
+anywhere else.
 
 Listens on 127.0.0.1 only; Docker Desktop forwards host.docker.internal there.
 Without a console (pythonw.exe, a logon task) it logs to ai_bridge.log next to
@@ -47,14 +53,30 @@ from app import ai_cli  # noqa: E402  (stdlib-only module)
 MAX_BODY = 45_000_000  # 6 images × 5 MB, base64-encoded, plus the prompt
 _slots = threading.BoundedSemaphore(3)  # at most 3 CLI runs at once
 SECRET = ""
+STUDY_ROOT: Path | None = None
 
 
-def _secret_from_env_file(path: Path) -> str:
+def _from_env_file(path: Path, name: str) -> str:
     for line in path.read_text(encoding="utf-8").splitlines():
         key, sep, value = line.partition("=")
-        if sep and key.strip() == "AI_BRIDGE_SECRET":
+        if sep and key.strip() == name:
             return value.strip().strip('"').strip("'")
     return ""
+
+
+def course_dir(folder: str) -> Path:
+    """`folder` (e.g. "<user id>/THIN") under STUDY_ROOT, symlinks resolved;
+    ValueError if it's missing, not a folder, or outside STUDY_ROOT."""
+    if STUDY_ROOT is None:
+        raise ValueError("this bridge has no AI_BRIDGE_STUDY_ROOT, so it can't open course folders")
+    parts = [seg for seg in folder.replace("\\", "/").split("/") if seg]
+    if not parts or any(seg in (".", "..") or ":" in seg for seg in parts):
+        raise ValueError("invalid course folder")
+    root = STUDY_ROOT.resolve()
+    target = root.joinpath(*parts).resolve()
+    if root not in target.parents or not target.is_dir():
+        raise ValueError("course folder not found")
+    return target
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -101,16 +123,18 @@ class Handler(BaseHTTPRequestHandler):
             body = json.loads(self.rfile.read(length))
             provider, prompt = body["provider"], body["prompt"]
             model = body.get("model") or ""
+            folder = body.get("folder") or ""
             images = [(img["mime"], base64.b64decode(img["data"], validate=True))
                       for img in body.get("images") or []]
-            if provider not in ai_cli.COMMANDS or not isinstance(prompt, str) or not prompt or not isinstance(model, str):
+            if (provider not in ai_cli.COMMANDS or not isinstance(prompt, str) or not prompt
+                    or not isinstance(model, str) or not isinstance(folder, str)):
                 raise ValueError
         except (ValueError, KeyError, TypeError, binascii.Error):
-            return self._reply(400, {"error": "expected {provider, prompt, model?, images?}"})
+            return self._reply(400, {"error": "expected {provider, prompt, model?, images?, folder?}"})
         if not _slots.acquire(timeout=30):
             return self._reply(503, {"error": "busy, try again"})
         try:
-            proc = ai_cli.run(provider, prompt, model, images)
+            proc = ai_cli.run(provider, prompt, model, images, course_dir(folder) if folder else None)
         except ai_cli.CliMissing as exc:
             return self._reply(400, {"error": "missing", "message": str(exc)})
         except ValueError as exc:
@@ -123,7 +147,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main() -> int:
-    global SECRET
+    global SECRET, STUDY_ROOT
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--env-file", type=Path, help="read AI_BRIDGE_SECRET from this .env")
     ap.add_argument("--host", default="127.0.0.1")
@@ -137,11 +161,15 @@ def main() -> int:
     elif sys.stderr is None:  # pythonw with nowhere to log: drop log lines rather than crash
         sys.stderr = open(os.devnull, "w")
     SECRET = os.environ.get("AI_BRIDGE_SECRET", "") or (
-        _secret_from_env_file(args.env_file) if args.env_file else "")
+        _from_env_file(args.env_file, "AI_BRIDGE_SECRET") if args.env_file else "")
+    root = os.environ.get("AI_BRIDGE_STUDY_ROOT", "") or (
+        _from_env_file(args.env_file, "AI_BRIDGE_STUDY_ROOT") if args.env_file else "")
+    STUDY_ROOT = Path(root) if root else None
     if len(SECRET) < 24:
         print("AI_BRIDGE_SECRET missing or shorter than 24 characters", file=sys.stderr)
         return 2
-    print(f"ai bridge on http://{args.host}:{args.port} — installed: {ai_cli.installed()}", file=sys.stderr)
+    print(f"ai bridge on http://{args.host}:{args.port} — installed: {ai_cli.installed()}"
+          f" — course folders: {STUDY_ROOT or 'off'}", file=sys.stderr)
     ThreadingHTTPServer((args.host, args.port), Handler).serve_forever()
     return 0
 
