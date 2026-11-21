@@ -857,7 +857,11 @@
     "you": "You",
     "courseFiles": "Claude can read the files in {{course}}",
     "geminiNoFiles": "Gemini only sees the open file's text. To let the AI read your course files or images, switch to Claude.",
-    "imagesNeedClaude": "Only Claude can look at images — switch to Claude or remove the images."
+    "imagesNeedClaude": "Only Claude can look at images — switch to Claude or remove the images.",
+    "tokens": "{{input}} in · {{output}} out",
+    "tokensDetail": "Read {{input}} tokens ({{cached}} from cache) · wrote {{output}} tokens ({{thinking}} of them thinking)",
+    "chatTokens": "{{total}} tokens",
+    "chatTokensHint": "Tokens used by all answers in this chat (read + written)"
   },
   "quiz": {
     "title": "Quiz",

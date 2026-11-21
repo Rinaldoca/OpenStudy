@@ -72,7 +72,7 @@ def test_run_ai_sends_the_folder_relative_to_the_file_store(tmp_path, monkeypatc
 
     async def fake_bridge(url, provider, prompt, model, images, folder):
         sent.update(provider=provider, folder=folder)
-        return 0, "answer", ""
+        return 0, "answer", "", None
     monkeypatch.setattr(ai, "_run_bridge", fake_bridge)
 
     assert asyncio.run(ai.run_ai("claude", "q", user, course="THIN")) == "answer"

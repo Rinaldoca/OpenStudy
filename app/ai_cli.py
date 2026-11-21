@@ -151,19 +151,72 @@ def _claude_stream_input(prompt: str, images: list[tuple[str, bytes]]) -> str:
     return json.dumps({"type": "user", "message": {"role": "user", "content": content}}) + "\n"
 
 
-def _claude_stream_result(proc: subprocess.CompletedProcess) -> subprocess.CompletedProcess:
-    """Turn claude's stream-json output back into plain stdout/stderr."""
-    for line in reversed(proc.stdout.splitlines()):
+def _int(v: object) -> int:
+    return v if isinstance(v, int) and v >= 0 else 0
+
+
+def claude_usage(result: dict) -> dict:
+    """Token counts from claude's JSON `result`. `input` counts everything
+    the model read, cached or not; `model` is the exact model that answered."""
+    u = result.get("usage") or {}
+    cache_read = _int(u.get("cache_read_input_tokens"))
+    input_total = _int(u.get("input_tokens")) + _int(u.get("cache_creation_input_tokens")) + cache_read
+    models = list((result.get("modelUsage") or {}).keys())
+    return {
+        "input": input_total,
+        "output": _int(u.get("output_tokens")),
+        "cache_read": cache_read,
+        "thinking": _int((u.get("output_tokens_details") or {}).get("thinking_tokens")),
+        "model": models[0] if len(models) == 1 else ", ".join(models),
+    }
+
+
+def agy_usage(result: dict) -> dict:
+    u = result.get("usage") or {}
+    return {
+        "input": _int(u.get("input_tokens")),
+        "output": _int(u.get("output_tokens")),
+        "cache_read": _int(u.get("cache_read_tokens")),
+        "thinking": _int(u.get("thinking_tokens")),
+        "model": "",
+    }
+
+
+def _done(proc: subprocess.CompletedProcess, code: int, out: str, err: str,
+          usage: dict | None) -> subprocess.CompletedProcess:
+    res = subprocess.CompletedProcess(proc.args, code, out, err)
+    res.usage = usage  # type: ignore[attr-defined]  # read with usage_of()
+    return res
+
+
+def usage_of(proc: subprocess.CompletedProcess) -> dict | None:
+    return getattr(proc, "usage", None)
+
+
+def _parse_json_output(provider: str, proc: subprocess.CompletedProcess) -> subprocess.CompletedProcess:
+    """Turn the CLIs' JSON output (claude: json or stream-json; agy: json) back
+    into plain stdout/stderr, keeping the token usage on the result."""
+    lines = proc.stdout.strip().splitlines()
+    for line in reversed(lines):
         try:
             event = json.loads(line)
         except ValueError:
             continue
-        if event.get("type") == "result":
+        if not isinstance(event, dict):
+            continue
+        if provider == "claude" and event.get("type") == "result":
             text = str(event.get("result") or "")
+            usage = claude_usage(event)
             if event.get("is_error"):
-                return subprocess.CompletedProcess(proc.args, proc.returncode or 1, "", text or proc.stderr)
-            return subprocess.CompletedProcess(proc.args, 0, text, proc.stderr)
-    return subprocess.CompletedProcess(proc.args, proc.returncode or 1, "", proc.stderr or proc.stdout[-2000:])
+                return _done(proc, proc.returncode or 1, "", text or proc.stderr, usage)
+            return _done(proc, 0, text, proc.stderr, usage)
+        if provider == "gemini" and "status" in event:
+            usage = agy_usage(event)
+            if event.get("status") != "SUCCESS":
+                return _done(proc, proc.returncode or 1, "", str(event.get("error") or proc.stderr), usage)
+            return _done(proc, 0, str(event.get("response") or ""), proc.stderr, usage)
+    # Not JSON (old CLI, crash): pass the raw output through.
+    return _done(proc, proc.returncode, proc.stdout, proc.stderr, None)
 
 
 CAN_SEE_IMAGES = {"claude"}
@@ -206,9 +259,12 @@ def run(provider: str, prompt: str, model: str = "",
         argv[1:1] = ["--model", model]
     if provider == "gemini":
         argv[1:1] = ["--settings", _AGY_LOCKDOWN]
+    # JSON output everywhere: the answer plus its token usage.
     stream = provider == "claude" and bool(images)
     if stream:
         argv += ["--input-format", "stream-json", "--output-format", "stream-json", "--verbose"]
+    elif provider in ("claude", "gemini"):
+        argv[1:1] = ["--output-format", "json"]
     stdin_text = _claude_stream_input(prompt, images) if stream else (None if as_arg else prompt)
 
     def call(cwd: str) -> subprocess.CompletedProcess:
@@ -223,4 +279,4 @@ def run(provider: str, prompt: str, model: str = "",
         # Empty cwd: the CLI sees nothing but the prompt.
         with tempfile.TemporaryDirectory(prefix="openstudy-ai-") as cwd:
             proc = call(cwd)
-    return _claude_stream_result(proc) if stream else proc
+    return _parse_json_output(provider, proc) if provider in ("claude", "gemini") else proc

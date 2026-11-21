@@ -38,9 +38,11 @@ async def test_shared_chat_round_trip(db_conn, monkeypatch):
     calls = []
 
     async def fake_run_ai(provider, prompt, user, model="", images=None, course=None):
-        calls.append({"provider": provider, "prompt": prompt, "model": model, "images": images or []})
-        return "**Bold** answer with $x^2$"
-    monkeypatch.setattr(ai_chats, "run_ai", fake_run_ai)
+        calls.append({"provider": provider, "prompt": prompt, "model": model, "images": images or [],
+                      "course": course})
+        return "**Bold** answer with $x^2$", {"input": 1200, "output": 80, "cache_read": 900,
+                                               "thinking": 0, "model": "claude-sonnet-5-5"}
+    monkeypatch.setattr(ai_chats, "run_ai_full", fake_run_ai)
 
     app = create_app()
     current = {"user": _sentinel_user()}
@@ -57,6 +59,7 @@ async def test_shared_chat_round_trip(db_conn, monkeypatch):
         assert body["title"] == "What is shown here?"  # first line of the first question
         assert [m["role"] for m in body["messages"]] == ["user", "assistant"]
         assert body["messages"][1]["content"] == "**Bold** answer with $x^2$" and not body["pending"]
+        assert body["messages"][1]["usage"]["output"] == 80 and body["messages"][0]["usage"] is None
         assert calls[0]["model"] == "sonnet" and calls[0]["images"] == [("image/png", png)]
         assert "LaTeX" in calls[0]["prompt"] and "<selected_text>\na DFA" in calls[0]["prompt"]
 
@@ -82,7 +85,7 @@ async def test_shared_chat_round_trip(db_conn, monkeypatch):
         async def failing(*a, **k):
             from fastapi import HTTPException
             raise HTTPException(502, "claude failed: rate limited")
-        monkeypatch.setattr(ai_chats, "run_ai", failing)
+        monkeypatch.setattr(ai_chats, "run_ai_full", failing)
         msgs = (await ac.post(f"/api/ai/chats/{chat['id']}/messages", json={"provider": "claude", "question": "x"})).json()["messages"]
         assert msgs[-1]["role"] == "error" and "rate limited" in msgs[-1]["content"]
 

@@ -161,7 +161,7 @@ Images = list[tuple[str, bytes]]
 
 
 async def _run_bridge(url: str, provider: str, prompt: str, model: str, images: Images,
-                      folder: str) -> tuple[int, str, str]:
+                      folder: str) -> tuple[int, str, str, dict | None]:
     payload = {"provider": provider, "prompt": prompt, "model": model, "folder": folder,
                "images": [{"mime": m, "data": base64.b64encode(d).decode()} for m, d in images]}
     try:
@@ -177,18 +177,19 @@ async def _run_bridge(url: str, provider: str, prompt: str, model: str, images: 
     if r.status_code != 200:
         raise HTTPException(400 if data.get("error") in ("missing", "invalid") else 502,
                             data.get("message") or f"AI bridge error: {data.get('error') or r.status_code}")
-    return int(data.get("returncode", 1)), data.get("stdout") or "", data.get("stderr") or ""
+    usage = data.get("usage") if isinstance(data.get("usage"), dict) else None
+    return int(data.get("returncode", 1)), data.get("stdout") or "", data.get("stderr") or "", usage
 
 
 async def _run_local(provider: str, prompt: str, model: str, images: Images,
-                     workdir: Path | None) -> tuple[int, str, str]:
+                     workdir: Path | None) -> tuple[int, str, str, dict | None]:
     try:
         proc = await asyncio.to_thread(ai_cli.run, provider, prompt, model, images, workdir)
     except (ai_cli.CliMissing, ValueError) as exc:
         raise HTTPException(400, str(exc)) from exc
     except subprocess.TimeoutExpired as exc:
         raise HTTPException(504, "the AI took longer than 5 minutes") from exc
-    return proc.returncode, proc.stdout, proc.stderr
+    return proc.returncode, proc.stdout, proc.stderr, ai_cli.usage_of(proc)
 
 
 def course_folder(user: User, folder: str) -> Path:
@@ -207,9 +208,16 @@ def course_folder(user: User, folder: str) -> Path:
 
 async def run_ai(provider: str, prompt: str, user: User, model: str = "", images: Images | None = None,
                  course: str | None = None) -> str:
-    """Run `prompt` (+ pasted images) through the provider's CLI and return its
-    answer (HTTP errors on failure). `model` "" = the CLI's default. `course`:
-    a top-level course folder the AI may read (claude only, read-only)."""
+    """Run `prompt` through the provider's CLI and return its answer; see run_ai_full."""
+    return (await run_ai_full(provider, prompt, user, model, images, course))[0]
+
+
+async def run_ai_full(provider: str, prompt: str, user: User, model: str = "", images: Images | None = None,
+                      course: str | None = None) -> tuple[str, dict | None]:
+    """Run `prompt` (+ pasted images) through the provider's CLI and return
+    (answer, token usage or None); HTTP errors on failure. `model` "" = the
+    CLI's default. `course`: a top-level course folder the AI may read
+    (claude only, read-only)."""
     _require_ai(user)
     if course and provider not in ai_cli.CAN_READ_FOLDER:
         course = None  # the UI says so; answer from the open file instead of failing
@@ -222,9 +230,9 @@ async def run_ai(provider: str, prompt: str, user: User, model: str = "", images
             if root not in workdir.parents:
                 raise HTTPException(400, "this course folder isn't in the server's file store")
             folder = workdir.relative_to(root).as_posix()
-        code, stdout, stderr = await _run_bridge(url, provider, prompt, model, images or [], folder)
+        code, stdout, stderr, usage = await _run_bridge(url, provider, prompt, model, images or [], folder)
     else:
-        code, stdout, stderr = await _run_local(provider, prompt, model, images or [], workdir)
+        code, stdout, stderr, usage = await _run_local(provider, prompt, model, images or [], workdir)
     answer = stdout.strip()
     if code != 0 or not answer:
         lines = (stderr or stdout).strip().splitlines()
@@ -233,7 +241,7 @@ async def run_ai(provider: str, prompt: str, user: User, model: str = "", images
         needs_login = any(w in " ".join(err).lower() for w in ("auth", "login", "log in", "sign in"))
         hint = f" — {ai_cli.LOGIN_HINT[provider]}" if needs_login else ""
         raise HTTPException(502, f"{provider} failed: {' / '.join(err) or 'no output'}{hint}")
-    return answer
+    return answer, usage
 
 
 @router.post("/ask")

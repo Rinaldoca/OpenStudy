@@ -143,7 +143,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._reply(504, {"error": "timeout"})
         finally:
             _slots.release()
-        self._reply(200, {"returncode": proc.returncode, "stdout": proc.stdout, "stderr": proc.stderr})
+        self._reply(200, {"returncode": proc.returncode, "stdout": proc.stdout, "stderr": proc.stderr,
+                          "usage": ai_cli.usage_of(proc)})
 
 
 def main() -> int:

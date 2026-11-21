@@ -32,7 +32,7 @@ from ..auth import require_user, User
 from ..schemas import EventCreate
 from ..services import events as events_svc
 from ..services import storage as storage_svc
-from .ai import Provider, _material, run_ai
+from .ai import Provider, _material, run_ai_full
 
 router = APIRouter(prefix="/ai", tags=["ai"], dependencies=[Depends(require_user)])
 
@@ -84,7 +84,7 @@ async def create_chat(body: ChatCreate, user: User = Depends(require_user)) -> d
 
 async def _messages(chat_id: UUID) -> list[dict[str, Any]]:
     rows = await db.fetch(
-        """SELECT m.id, m.role, m.content, m.provider, m.model, m.context, m.created_at,
+        """SELECT m.id, m.role, m.content, m.provider, m.model, m.context, m.usage, m.created_at,
                   m.author, u.display_name AS author_name,
                   COALESCE((SELECT array_agg(i.id ORDER BY i.created_at) FROM ai_chat_images i
                             WHERE i.message_id = m.id), '{}') AS images
@@ -227,13 +227,14 @@ async def send_message(chat_id: UUID, body: MessageIn, user: User = Depends(requ
         else:
             ctx_path = ctx.get("path") or ""
             course = body.course or (ctx_path.split("/")[0] if "/" in ctx_path else None)
-        answer, role = await run_ai(body.provider, prompt, user, body.model, images, course), "assistant"
+        answer, usage = await run_ai_full(body.provider, prompt, user, body.model, images, course)
+        role = "assistant"
     except HTTPException as exc:
-        answer, role = str(exc.detail), "error"
+        answer, usage, role = str(exc.detail), None, "error"
     await db.execute(
-        """INSERT INTO ai_chat_messages (chat_id, role, content, author, provider, model)
-           VALUES (%s, %s, %s, NULL, %s, %s)""",
-        str(chat_id), role, answer, body.provider, body.model or None,
+        """INSERT INTO ai_chat_messages (chat_id, role, content, author, provider, model, usage)
+           VALUES (%s, %s, %s, NULL, %s, %s, %s)""",
+        str(chat_id), role, answer, body.provider, body.model or None, Jsonb(usage) if usage else None,
     )
     await db.execute("UPDATE ai_chats SET updated_at = now() WHERE id = %s", str(chat_id))
     # Logged so the daily quiz knows what you asked about (question only, not the answer).

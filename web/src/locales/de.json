@@ -857,7 +857,11 @@
     "you": "Du",
     "courseFiles": "Claude darf die Dateien in {{course}} lesen",
     "geminiNoFiles": "Gemini sieht nur den Text der offenen Datei. Damit die KI deine Kursdateien oder Bilder lesen kann, wechsle zu Claude.",
-    "imagesNeedClaude": "Nur Claude kann Bilder ansehen — wechsle zu Claude oder entferne die Bilder."
+    "imagesNeedClaude": "Nur Claude kann Bilder ansehen — wechsle zu Claude oder entferne die Bilder.",
+    "tokens": "{{input}} rein · {{output}} raus",
+    "tokensDetail": "{{input}} Tokens gelesen ({{cached}} aus dem Cache) · {{output}} Tokens geschrieben (davon {{thinking}} Denken)",
+    "chatTokens": "{{total}} Tokens",
+    "chatTokensHint": "Tokens aller Antworten in diesem Chat (gelesen + geschrieben)"
   },
   "quiz": {
     "title": "Quiz",

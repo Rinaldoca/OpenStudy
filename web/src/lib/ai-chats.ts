@@ -23,7 +23,17 @@ export type ChatMessage = {
   created_at: string;
   author_name: string | null;
   images: string[];
+  /** Tokens the CLI reported for this answer (null for questions, errors, older answers). */
+  usage?: TokenUsage | null;
 };
+export type TokenUsage = { input: number; output: number; cache_read: number; thinking: number; model: string };
+
+/** 1234 → "1.2k", 1_250_000 → "1.25M". */
+export function fmtTokens(n: number): string {
+  if (n < 1000) return String(n);
+  if (n < 1_000_000) return `${(n / 1000).toFixed(n < 10_000 ? 1 : 0)}k`;
+  return `${(n / 1_000_000).toFixed(2)}M`;
+}
 export type Chat = { id: string; title: string; messages: ChatMessage[]; pending: boolean };
 export type ModelOption = { id: string; label: string };
 export type PastedImage = { mime: string; data: string; url: string }; // data = base64, url = preview

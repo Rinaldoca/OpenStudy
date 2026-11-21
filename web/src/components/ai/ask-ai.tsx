@@ -26,6 +26,7 @@ import {
   type ProviderId,
 } from "@/lib/ai";
 import {
+  fmtTokens,
   prepareImage,
   useChat,
   useChats,
@@ -285,6 +286,7 @@ export function AskAi() {
   // Polling may already show our question before the answer arrives.
   const showOptimistic = sending && !(last?.role === "user" && last.content === sending.question);
   const othersPending = chat.data?.pending && !send.isPending;
+  const chatTokens = messages.reduce((sum, m) => sum + (m.usage ? m.usage.input + m.usage.output : 0), 0);
 
   return (
     <>
@@ -446,6 +448,11 @@ export function AskAi() {
               <span className="text-sm font-semibold flex-1 truncate">
                 {(activeId && chat.data?.title) || t("ai.newChat")}
               </span>
+              {chatTokens > 0 && (
+                <span className="text-[11px] text-muted tnum shrink-0" title={t("ai.chatTokensHint")}>
+                  {t("ai.chatTokens", { total: fmtTokens(chatTokens) })}
+                </span>
+              )}
               <button
                 type="button"
                 onClick={newChat}
@@ -705,13 +712,27 @@ function Message({ m, localImages }: { m: ChatMessage; localImages?: PastedImage
   if (m.role === "error") {
     return <p className="text-sm text-critical whitespace-pre-wrap">{m.content}</p>;
   }
+  const u = m.usage;
   return (
     <div className="flex flex-col gap-1">
       <span className="text-[11px] text-muted">
         {m.provider ? PROVIDER_LABELS[m.provider] : "AI"}
-        {m.model ? ` · ${m.model}` : ""}
+        {u?.model ? ` · ${u.model}` : m.model ? ` · ${m.model}` : ""}
       </span>
       <Markdown text={m.content} />
+      {u && (
+        <span
+          className="text-[11px] text-muted tnum"
+          title={t("ai.tokensDetail", {
+            input: u.input.toLocaleString(),
+            cached: u.cache_read.toLocaleString(),
+            output: u.output.toLocaleString(),
+            thinking: u.thinking.toLocaleString(),
+          })}
+        >
+          {t("ai.tokens", { input: fmtTokens(u.input), output: fmtTokens(u.output) })}
+        </span>
+      )}
     </div>
   );
 }
